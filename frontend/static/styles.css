@@ -1,0 +1,80 @@
+/* Custom styles for A2A Retail Demo */
+
+/* Animation for loading states */
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.loading {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Custom scrollbar for chat */
+.chat-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* Hover effects for cards */
+.inventory-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.inventory-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.status-online {
+    background-color: #4caf50;
+}
+
+.status-offline {
+    background-color: #f44336;
+}
+
+/* Message bubbles */
+.message-bubble {
+    max-width: 70%;
+    word-wrap: break-word;
+}
+
+.message-bubble.user {
+    background-color: #1976d2;
+    color: white;
+    margin-left: auto;
+}
+
+.message-bubble.agent {
+    background-color: #e0e0e0;
+    color: black;
+}
