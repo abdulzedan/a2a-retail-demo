@@ -178,9 +178,6 @@ class InventoryAgent:
             memory_service=InMemoryMemoryService(),
         )
     
-    def get_processing_message(self) -> str:
-        return "Checking inventory..."
-    
     def _build_agent(self) -> Agent:
         """Build the ADK agent for inventory management."""
         return Agent(
@@ -219,6 +216,7 @@ When responding with product information, format it clearly with details like:
     async def stream(self, query: str, session_id: str) -> AsyncIterable[Dict[str, Any]]:
         """Stream responses from the inventory agent."""
         try:
+            # Get or create session
             session = await self._runner.session_service.get_session(
                 app_name=self._agent.name,
                 user_id=self._user_id,
@@ -233,44 +231,80 @@ When responding with product information, format it clearly with details like:
                     session_id=session_id,
                 )
             
+            # Create user message
             content = types.Content(
                 role="user",
                 parts=[types.Part.from_text(text=query)]
             )
+            
+            # Yield initial status
+            yield {
+                "type": "status",
+                "message": "Processing inventory request..."
+            }
+            
+            # Run agent
+            tool_called = False
+            final_response = None
             
             async for event in self._runner.run_async(
                 user_id=self._user_id,
                 session_id=session.id,
                 new_message=content
             ):
+                # Check for tool calls
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.function_call:
+                            tool_called = True
+                            yield {
+                                "type": "tool_call",
+                                "tool_name": part.function_call.name,
+                                "message": f"Checking {part.function_call.name.replace('_', ' ')}..."
+                            }
+                
+                # Check for final response
                 if event.is_final_response():
-                    response = ""
-                    if (event.content and event.content.parts and 
-                        event.content.parts[0].text):
-                        response = "\n".join([
-                            p.text for p in event.content.parts if p.text
-                        ])
-                    elif (event.content and event.content.parts and 
-                          any([p.function_response for p in event.content.parts])):
-                        # Handle function call responses
-                        for part in event.content.parts:
-                            if part.function_response:
-                                response = json.dumps(part.function_response.response, indent=2)
-                                break
+                    final_response = event
+            
+            # Process final response
+            if final_response and final_response.content:
+                response_text = ""
+                response_data = None
+                
+                if final_response.content.parts:
+                    # Extract text parts
+                    text_parts = []
+                    for part in final_response.content.parts:
+                        if part.text:
+                            text_parts.append(part.text)
+                        elif part.function_response:
+                            # Handle function response
+                            response_data = part.function_response.response
                     
+                    if text_parts:
+                        response_text = "\n".join(text_parts)
+                
+                # Yield final result
+                if response_data:
                     yield {
-                        "is_task_complete": True,
-                        "content": response,
+                        "type": "result",
+                        "content": response_data
                     }
                 else:
                     yield {
-                        "is_task_complete": False,
-                        "updates": self.get_processing_message(),
+                        "type": "result",
+                        "content": response_text or "No response generated"
                     }
+            else:
+                yield {
+                    "type": "error",
+                    "message": "No response from inventory agent"
+                }
         
         except Exception as e:
-            logger.error(f"Error in inventory agent stream: {e}")
+            logger.error(f"Error in inventory agent stream: {e}", exc_info=True)
             yield {
-                "is_task_complete": True,
-                "content": f"Error processing inventory request: {str(e)}",
+                "type": "error",
+                "message": f"Error processing inventory request: {str(e)}"
             }

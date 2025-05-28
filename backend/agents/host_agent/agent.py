@@ -1,16 +1,25 @@
-"""Host Agent that orchestrates between Customer Service and Inventory agents.
-
-This version *only* changes the two tool functions so they use the shared
-`send_message_to_agent` helper (which contains the A2AClient shim). No other
-logic from your original file has been altered.
-"""
+"""Host Agent that orchestrates between Customer Service and Inventory agents."""
 
 import logging
 import uuid
-from typing import Any, AsyncIterable, Dict
+from typing import Any, AsyncIterable, Dict, List
 
 import httpx
-from a2a.types import AgentCard, Message, Part, Role, TextPart
+from a2a.client import A2AClient
+from a2a.types import (
+    AgentCard, 
+    Message, 
+    Part, 
+    Role, 
+    TextPart,
+    SendMessageRequest,
+    MessageSendParams,
+    MessageSendConfiguration,
+    Task,
+    TaskStatusUpdateEvent,
+    TaskArtifactUpdateEvent,
+)
+from a2a.utils import get_message_text
 from google.adk.agents import Agent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
@@ -18,63 +27,17 @@ from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
-from backend.utils.a2a_utils import send_message_to_agent  # central helper with shim
-
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Helper to build outbound Message objects (used by fallback paths)
-# ---------------------------------------------------------------------------
-
-def _new_user_message(text: str, *, context_id: str | None = None) -> Message:
-    return Message(
-        messageId=str(uuid.uuid4()),
-        contextId=context_id,
-        role=Role.user,
-        parts=[Part(root=TextPart(text=text))],
-    )
-
-# ---------------------------------------------------------------------------
-# Remote agent tool functions (now delegate to utils helper)
-# ---------------------------------------------------------------------------
-
-
-async def call_customer_service_agent(query: str) -> str:  # noqa: D401
-    """Forward *query* to Customer Service Agent over A2A."""
-    response = await send_message_to_agent("http://localhost:8002", query)
-    return response or "Customer service is temporarily unavailable."
-
-
-async def call_inventory_agent(query: str) -> str:  # noqa: D401
-    """Forward *query* to Inventory Agent over A2A."""
-    response = await send_message_to_agent("http://localhost:8001", query)
-    return response or "Inventory system is temporarily unavailable."
-
-
-async def get_agent_status() -> str:  # noqa: D401
-    """Return online/offline status for remote agents."""
-    lines: list[str] = []
-    async with httpx.AsyncClient() as hc:
-        for name, url in [
-            ("Inventory Agent", "http://localhost:8001"),
-            ("Customer Service Agent", "http://localhost:8002"),
-        ]:
-            try:
-                card: AgentCard = await A2AClient(url=url, httpx_client=hc).get_agent_card()
-                lines.append(f"✅ {name}: {card.name} (Online)")
-            except Exception:
-                lines.append(f"❌ {name}: Offline")
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Host Agent definition (unchanged core logic)
-# ---------------------------------------------------------------------------
 
 class HostAgent:
     """Coordinates between Inventory and Customer Service agents."""
 
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
+    
+    # Agent URLs
+    INVENTORY_AGENT_URL = "http://localhost:8001"
+    CUSTOMER_SERVICE_AGENT_URL = "http://localhost:8002"
 
     def __init__(self) -> None:
         self._agent = self._build_agent()
@@ -86,33 +49,148 @@ class HostAgent:
             session_service=InMemorySessionService(),
             memory_service=InMemoryMemoryService(),
         )
+        self._agent_cards: Dict[str, AgentCard] = {}
 
-    # --------------------------- LLM agent setup ------------------------
+    async def _get_agent_card(self, agent_url: str) -> AgentCard | None:
+        """Get and cache agent card."""
+        if agent_url not in self._agent_cards:
+            try:
+                logger.info(f"Fetching agent card from {agent_url}")
+                async with httpx.AsyncClient() as hc:
+                    # First try a direct GET to check connectivity
+                    test_response = await hc.get(f"{agent_url}/.well-known/agent.json")
+                    logger.info(f"Direct GET to {agent_url}: {test_response.status_code}")
+                    
+                    client = await A2AClient.get_client_from_agent_card_url(
+                        httpx_client=hc,
+                        base_url=agent_url
+                    )
+                    if hasattr(client, 'agent_card'):
+                        self._agent_cards[agent_url] = client.agent_card
+                        logger.info(f"Successfully cached agent card for {agent_url}")
+            except Exception as e:
+                logger.error(f"Failed to get agent card from {agent_url}: {e}", exc_info=True)
+                return None
+        return self._agent_cards.get(agent_url)
 
-    @staticmethod
-    def get_processing_message() -> str:
-        return "Coordinating with specialized agents..."
+    async def _call_agent_with_a2a(self, agent_url: str, query: str, context_id: str) -> str:
+        """Call an agent using the A2A protocol."""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as hc:
+                # Get the A2A client
+                client = await A2AClient.get_client_from_agent_card_url(
+                    httpx_client=hc,
+                    base_url=agent_url
+                )
+                
+                # Create message
+                message = Message(
+                    messageId=str(uuid.uuid4()),
+                    contextId=context_id,
+                    role=Role.user,
+                    parts=[Part(root=TextPart(text=query))]
+                )
+                
+                # Create request with configuration
+                request = SendMessageRequest(
+                    params=MessageSendParams(
+                        message=message,
+                        configuration=MessageSendConfiguration(
+                            acceptedOutputModes=["text/plain", "text"]
+                        )
+                    )
+                )
+                
+                # Send message
+                response = await client.send_message(request)
+                
+                # Extract response
+                if hasattr(response, 'root'):
+                    result = response.root.result
+                else:
+                    result = response.result if hasattr(response, 'result') else response
+                
+                # Handle different response types
+                if isinstance(result, Task):
+                    # Task response
+                    if result.artifacts:
+                        # Extract text from artifacts
+                        texts = []
+                        for artifact in result.artifacts:
+                            for part in artifact.parts:
+                                if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                    texts.append(part.root.text)
+                        return "\n".join(texts) if texts else "Task completed with no text response"
+                    elif result.status and result.status.message:
+                        return get_message_text(result.status.message)
+                    else:
+                        return f"Task {result.id} status: {result.status.state if result.status else 'unknown'}"
+                
+                elif isinstance(result, Message):
+                    # Direct message response
+                    return get_message_text(result)
+                
+                else:
+                    logger.warning(f"Unexpected response type: {type(result)}")
+                    return "Received response but unable to extract text"
+                
+        except Exception as e:
+            logger.error(f"Error calling agent at {agent_url}: {e}", exc_info=True)
+            return f"Error communicating with agent: {str(e)}"
+
+    async def call_customer_service_agent(self, query: str, context_id: str) -> str:
+        """Forward query to Customer Service Agent over A2A."""
+        return await self._call_agent_with_a2a(self.CUSTOMER_SERVICE_AGENT_URL, query, context_id)
+
+    async def call_inventory_agent(self, query: str, context_id: str) -> str:
+        """Forward query to Inventory Agent over A2A."""
+        return await self._call_agent_with_a2a(self.INVENTORY_AGENT_URL, query, context_id)
+
+    async def get_agent_status(self) -> str:
+        """Return online/offline status for remote agents."""
+        lines = ["Agent Status:"]
+        
+        for name, url in [
+            ("Inventory Agent", self.INVENTORY_AGENT_URL),
+            ("Customer Service Agent", self.CUSTOMER_SERVICE_AGENT_URL),
+        ]:
+            card = await self._get_agent_card(url)
+            if card:
+                lines.append(f"✅ {name}: Online - {card.description}")
+            else:
+                lines.append(f"❌ {name}: Offline")
+        
+        return "\n".join(lines)
 
     def _build_agent(self) -> Agent:
         return Agent(
             name="host_agent",
             model="gemini-2.0-flash",
-            description="Host agent orchestrating retail queries.",
+            description="Host agent orchestrating retail queries between specialized agents.",
             instruction=(
-                "You are a host agent that coordinates between specialized retail agents.\n\n"
-                "Follow the routing guidelines and always leverage the specialised agents."
+                """You are a host agent that coordinates between specialized retail agents.
+
+Your role is to analyze incoming queries and determine which agent should handle them.
+
+Routing rules:
+- **Customer Service Agent**: Handle queries about order status, returns, store hours, customer complaints, general inquiries
+- **Inventory Agent**: Handle queries about product availability, stock levels, product search, pricing
+
+When you receive a query, respond with ONLY one of these two responses:
+1. "ROUTE_TO_INVENTORY" - if the query is about products, stock, availability, or pricing
+2. "ROUTE_TO_CUSTOMER_SERVICE" - if the query is about orders, returns, store information, or general help
+
+Do not provide any other information or explanation. Just respond with the routing decision."""
             ),
-            tools=[
-                call_customer_service_agent,
-                call_inventory_agent,
-                get_agent_status,
-            ],
+            tools=[],  # No tools - we'll handle routing in code
         )
 
-    # --------------------------- Streaming interface --------------------
-
     async def stream(self, query: str, session_id: str) -> AsyncIterable[Dict[str, Any]]:
+        """Stream responses for the given query."""
         try:
+            logger.info(f"Host agent received query: {query}")
+            
+            # Get or create session
             session = await self._runner.session_service.get_session(
                 app_name=self._agent.name,
                 user_id=self._user_id,
@@ -126,25 +204,103 @@ class HostAgent:
                     session_id=session_id,
                 )
 
+            # Use session_id as context_id for consistency
+            context_id = session_id
+
+            # Check agent status first
+            inventory_card = await self._get_agent_card(self.INVENTORY_AGENT_URL)
+            customer_service_card = await self._get_agent_card(self.CUSTOMER_SERVICE_AGENT_URL)
+            
+            # Yield initial status
+            yield {
+                "type": "status",
+                "message": "Analyzing your request..."
+            }
+
+            # Create user message
             content = types.Content(role="user", parts=[types.Part.from_text(text=query)])
 
+            # Run the agent to determine routing
+            routing_decision = None
             async for event in self._runner.run_async(
                 user_id=self._user_id,
                 session_id=session.id,
                 new_message=content,
             ):
-                if event.is_final_response():
-                    response_txt = ""
-                    if event.content and event.content.parts and event.content.parts[0].text:
-                        response_txt = "\n".join(p.text for p in event.content.parts if p.text)
-                    elif event.content and any(p.function_response for p in event.content.parts):
-                        for p in event.content.parts:
-                            if p.function_response:
-                                response_txt = str(p.function_response.response)
-                                break
-                    yield {"is_task_complete": True, "content": response_txt}
-                else:
-                    yield {"is_task_complete": False, "updates": self.get_processing_message()}
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Error in host agent stream: %s", exc)
-            yield {"is_task_complete": True, "content": f"Error coordinating request: {exc}"}
+                if event.is_final_response() and event.content and event.content.parts:
+                    routing_decision = "\n".join(p.text for p in event.content.parts if p.text)
+                    break
+            
+            if not routing_decision:
+                yield {
+                    "type": "error",
+                    "message": "Unable to determine routing"
+                }
+                return
+            
+            # Check the routing decision
+            if "ROUTE_TO_INVENTORY" in routing_decision:
+                if not inventory_card:
+                    yield {
+                        "type": "error",
+                        "message": "Inventory agent is currently offline. Please try again later."
+                    }
+                    return
+                
+                yield {
+                    "type": "routing",
+                    "agent": "inventory",
+                    "message": "Checking our inventory system..."
+                }
+                
+                response = await self.call_inventory_agent(query, context_id)
+                
+                yield {
+                    "type": "agent_response",
+                    "agent": "inventory"
+                }
+                
+                yield {
+                    "type": "result",
+                    "content": response
+                }
+                
+            elif "ROUTE_TO_CUSTOMER_SERVICE" in routing_decision:
+                if not customer_service_card:
+                    yield {
+                        "type": "error",
+                        "message": "Customer service agent is currently offline. Please try again later."
+                    }
+                    return
+                
+                yield {
+                    "type": "routing",
+                    "agent": "customer service",
+                    "message": "Connecting you with customer service..."
+                }
+                
+                response = await self.call_customer_service_agent(query, context_id)
+                
+                yield {
+                    "type": "agent_response",
+                    "agent": "customer service"
+                }
+                
+                yield {
+                    "type": "result",
+                    "content": response
+                }
+                
+            else:
+                # Could not determine routing
+                yield {
+                    "type": "error",
+                    "message": "I couldn't determine which agent should handle your request. Please try rephrasing your question."
+                }
+                    
+        except Exception as exc:
+            logger.error(f"Error in host agent stream: {exc}", exc_info=True)
+            yield {
+                "type": "error",
+                "message": f"Error coordinating request: {str(exc)}"
+            }

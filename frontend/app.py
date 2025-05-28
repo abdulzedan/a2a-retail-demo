@@ -7,15 +7,27 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Optional
 from dataclasses import dataclass, field
+import uuid
 
 import mesop as me
-import requests
+import httpx
+from a2a.client import A2AClient
+from a2a.types import (
+    Message,
+    Part,
+    Role,
+    TextPart,
+    SendMessageRequest,
+    MessageSendParams,
+    MessageSendConfiguration,
+    Task,
+    TaskState,
+)
+from a2a.utils import get_message_text
 
 # Add project root to Python path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-
-from backend.utils.a2a_utils import A2AManager, send_message_to_agent, check_agent_health
 
 
 @me.stateclass
@@ -34,46 +46,110 @@ class AppState:
     # Configuration
     host_agent_url: str = "http://localhost:8000"
     show_debug: bool = False
+    
+    # Context management
+    context_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+
+async def check_agent_status_async() -> dict:
+    """Check the status of all agents asynchronously."""
+    agents = {
+        "host": "http://localhost:8000",
+        "inventory": "http://localhost:8001",
+        "customer_service": "http://localhost:8002",
+    }
+    
+    status = {}
+    
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for name, url in agents.items():
+            try:
+                # Try to get agent card
+                a2a_client = await A2AClient.get_client_from_agent_card_url(
+                    httpx_client=client,
+                    base_url=url
+                )
+                status[name] = True
+            except Exception:
+                status[name] = False
+    
+    return status
 
 
 def check_agent_status():
     """Check the status of all agents."""
     state = me.state(AppState)
     
+    # Run async function synchronously
     try:
-        # Check host agent
-        try:
-            response = requests.get(f"{state.host_agent_url}/.well-known/agent.json", timeout=5)
-            state.host_agent_online = response.status_code == 200
-        except:
-            state.host_agent_online = False
-        
-        # Check inventory agent
-        try:
-            response = requests.get("http://localhost:8001/.well-known/agent.json", timeout=5)
-            state.inventory_agent_online = response.status_code == 200
-        except:
-            state.inventory_agent_online = False
-        
-        # Check customer service agent
-        try:
-            response = requests.get("http://localhost:8002/.well-known/agent.json", timeout=5)
-            state.customer_service_agent_online = response.status_code == 200
-        except:
-            state.customer_service_agent_online = False
-            
+        status = asyncio.run(check_agent_status_async())
+        state.host_agent_online = status.get("host", False)
+        state.inventory_agent_online = status.get("inventory", False)
+        state.customer_service_agent_online = status.get("customer_service", False)
     except Exception as e:
         state.error_message = f"Error checking agent status: {str(e)}"
 
 
-async def send_message_to_host(message_text: str) -> str:
-    """Send message to host agent via A2A."""
+async def send_message_to_host_async(message_text: str, context_id: str) -> str:
+    """Send message to host agent via A2A asynchronously."""
     try:
-        response = await send_message_to_agent(
-            "http://localhost:8000",
-            message_text
-        )
-        return response or "No response from host agent"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Get A2A client
+            a2a_client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client=client,
+                base_url="http://localhost:8000"
+            )
+            
+            # Create message
+            message = Message(
+                messageId=str(uuid.uuid4()),
+                contextId=context_id,
+                role=Role.user,
+                parts=[Part(root=TextPart(text=message_text))]
+            )
+            
+            # Create request
+            request = SendMessageRequest(
+                params=MessageSendParams(
+                    message=message,
+                    configuration=MessageSendConfiguration(
+                        acceptedOutputModes=["text/plain", "text"]
+                    )
+                )
+            )
+            
+            # Send message
+            response = await a2a_client.send_message(request)
+            
+            # Extract response
+            if hasattr(response, 'root'):
+                result = response.root.result
+            else:
+                result = response.result if hasattr(response, 'result') else response
+            
+            # Handle different response types
+            if isinstance(result, Task):
+                # Task response
+                if result.artifacts:
+                    # Extract text from artifacts
+                    texts = []
+                    for artifact in result.artifacts:
+                        for part in artifact.parts:
+                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                texts.append(part.root.text)
+                    return "\n".join(texts) if texts else "Task completed with no text response"
+                elif result.status and result.status.message:
+                    return get_message_text(result.status.message)
+                else:
+                    return f"Task {result.id} status: {result.status.state if result.status else 'unknown'}"
+            
+            elif isinstance(result, Message):
+                # Direct message response
+                return get_message_text(result)
+            
+            else:
+                return "Received response but unable to extract text"
+                
     except Exception as e:
         return f"Error communicating with host agent: {str(e)}"
 
@@ -103,9 +179,11 @@ async def on_send_message(e: me.ClickEvent):
     state.is_loading = True
     state.error_message = None
     
+    yield  # Update UI to show user message
+    
     try:
         # Send to host agent
-        response = await send_message_to_host(message_text)
+        response = await send_message_to_host_async(message_text, state.context_id)
         
         # Add agent response
         agent_message = {
@@ -119,6 +197,7 @@ async def on_send_message(e: me.ClickEvent):
         state.error_message = f"Error: {str(e)}"
     finally:
         state.is_loading = False
+        yield  # Update UI with response
 
 
 def on_refresh_status(e: me.ClickEvent):
@@ -131,6 +210,8 @@ def on_clear_chat(e: me.ClickEvent):
     state = me.state(AppState)
     state.messages = []
     state.error_message = None
+    # Generate new context ID for new conversation
+    state.context_id = str(uuid.uuid4())
 
 
 def on_toggle_debug(e: me.ClickEvent):
@@ -180,7 +261,12 @@ def chat_message_bubble(message: dict):
                 border_radius=8,
             )
         ):
-            me.text(message["content"])
+            # Support markdown in responses
+            if is_user:
+                me.text(message["content"])
+            else:
+                me.markdown(message["content"])
+            
             if when:
                 me.text(when, type="caption", style=me.Style(opacity=0.7, margin=me.Margin(top=5)))
 
@@ -311,6 +397,7 @@ def main_page():
             ):
                 me.text("🔧 Debug Information", type="subtitle-1", style=me.Style(margin=me.Margin(bottom=10)))
                 me.text(f"Host Agent URL: {state.host_agent_url}")
+                me.text(f"Context ID: {state.context_id}")
                 me.text(f"Total Messages: {len(state.messages)}")
                 me.text(f"Loading: {state.is_loading}")
                 
