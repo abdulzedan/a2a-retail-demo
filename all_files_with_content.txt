@@ -237,7 +237,7 @@ if os.path.exists(gitignore_path):
             ignore_patterns.add(line)
 
 # Always ignore .venv and the output file
-ignore_patterns.update({".venv", "all_files_with_content.txt"})
+ignore_patterns.update({".venv", "all_files_with_content.txt", ".git", "__pycache__"})
 
 def should_ignore(rel_path):
     for pattern in ignore_patterns:
@@ -1501,26 +1501,6 @@ When responding with product information, format it clearly with details like:
                 "content": f"Error processing inventory request: {str(e)}",
             }
 
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/inventory_agent_a2a/__pycache__/server.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/inventory_agent_a2a/__pycache__/agent_executor.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/inventory_agent_a2a/__pycache__/agent.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/inventory_agent_a2a/__pycache__/__init__.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/__pycache__/__init__.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/host_agent/server.py ===
 """Host Agent A2A Server - Using Official A2A SDK."""
 
@@ -1720,13 +1700,27 @@ class HostAgentExecutor(AgentExecutor):
         raise ServerError(error=UnsupportedOperationError())
 
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/host_agent/agent.py ===
-"""Host Agent that orchestrates between Customer Service and Inventory agents."""
+"""Host Agent that orchestrates between Customer Service and Inventory agents.
 
-import asyncio
+Using A2A SDK's built-in utilities.
+"""
+
 import logging
-from typing import Any, AsyncIterable, Dict, List
-import httpx
+import uuid
+from typing import Any, AsyncIterable, Dict
 
+import httpx
+from a2a.client import A2AClient
+from a2a.types import (
+    AgentCard, 
+    Message, 
+    Part, 
+    Role, 
+    TextPart,
+    SendMessageRequest,
+    MessageSendParams,
+)
+from a2a.utils import get_message_text  # Use A2A's built-in utilities
 from google.adk.agents import Agent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
@@ -1734,92 +1728,141 @@ from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
-from a2a.client import A2AClient
-from a2a.types import AgentCard, Message, Part, Role, TextPart
-
 logger = logging.getLogger(__name__)
 
 
 async def call_customer_service_agent(query: str) -> str:
-    """Call the customer service agent via A2A."""
+    """Forward query to Customer Service Agent over A2A."""
     try:
-        async with httpx.AsyncClient() as http_client:
-            client = A2AClient(url="http://localhost:8002", httpx_client=http_client)
+        async with httpx.AsyncClient() as hc:
+            # Get the agent card first to initialize client properly
+            client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client=hc,
+                base_url="http://localhost:8002"
+            )
             
+            # Create proper message
             message = Message(
+                messageId=str(uuid.uuid4()),
                 role=Role.user,
                 parts=[Part(root=TextPart(text=query))]
             )
             
-            response = await client.send(message)
+            # Send using new API
+            request = SendMessageRequest(
+                params=MessageSendParams(message=message)
+            )
+            response = await client.send_message(request)
             
-            if response.artifacts and response.artifacts[0].parts:
-                return response.artifacts[0].parts[0].root.text
+            # Extract response properly
+            if hasattr(response, 'root'):
+                result = response.root.result
+            else:
+                result = response.result
             
-            return "Unable to get customer service response."
+            # Handle Task response
+            if hasattr(result, 'artifacts') and result.artifacts:
+                # Use A2A utils to extract text from artifacts
+                for artifact in result.artifacts:
+                    text = get_message_text(
+                        Message(
+                            messageId="temp",
+                            role=Role.agent,
+                            parts=artifact.parts
+                        )
+                    )
+                    if text:
+                        return text
+            # Handle Message response
+            elif hasattr(result, 'parts'):
+                return get_message_text(result)
+            
+            return "No response from customer service agent"
             
     except Exception as e:
-        logger.error(f"Error calling customer service agent: {e}")
-        return f"Customer service is temporarily unavailable: {str(e)}"
+        logger.error(f"Error calling customer service agent: {e}", exc_info=True)
+        return f"Customer service error: {str(e)}"
 
 
 async def call_inventory_agent(query: str) -> str:
-    """Call the inventory agent via A2A."""
+    """Forward query to Inventory Agent over A2A."""
     try:
-        async with httpx.AsyncClient() as http_client:
-            client = A2AClient(url="http://localhost:8001", httpx_client=http_client)
+        async with httpx.AsyncClient() as hc:
+            # Get the agent card first to initialize client properly
+            client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client=hc,
+                base_url="http://localhost:8001"
+            )
             
+            # Create proper message
             message = Message(
+                messageId=str(uuid.uuid4()),
                 role=Role.user,
                 parts=[Part(root=TextPart(text=query))]
             )
             
-            response = await client.send(message)
+            # Send using new API
+            request = SendMessageRequest(
+                params=MessageSendParams(message=message)
+            )
+            response = await client.send_message(request)
             
-            if response.artifacts and response.artifacts[0].parts:
-                return response.artifacts[0].parts[0].root.text
+            # Extract response properly
+            if hasattr(response, 'root'):
+                result = response.root.result
+            else:
+                result = response.result
             
-            return "Unable to get inventory information."
+            # Handle Task response
+            if hasattr(result, 'artifacts') and result.artifacts:
+                # Use A2A utils to extract text from artifacts
+                for artifact in result.artifacts:
+                    text = get_message_text(
+                        Message(
+                            messageId="temp",
+                            role=Role.agent,
+                            parts=artifact.parts
+                        )
+                    )
+                    if text:
+                        return text
+            # Handle Message response  
+            elif hasattr(result, 'parts'):
+                return get_message_text(result)
+            
+            return "No response from inventory agent"
             
     except Exception as e:
-        logger.error(f"Error calling inventory agent: {e}")
-        return f"Inventory system is temporarily unavailable: {str(e)}"
+        logger.error(f"Error calling inventory agent: {e}", exc_info=True)
+        return f"Inventory error: {str(e)}"
 
 
 async def get_agent_status() -> str:
-    """Check the status of all remote agents."""
-    try:
-        status_info = []
-        
-        async with httpx.AsyncClient() as http_client:
-            # Check inventory agent
+    """Return online/offline status for remote agents."""
+    lines = []
+    async with httpx.AsyncClient() as hc:
+        for name, url in [
+            ("Inventory Agent", "http://localhost:8001"),
+            ("Customer Service Agent", "http://localhost:8002"),
+        ]:
             try:
-                client = A2AClient(url="http://localhost:8001", httpx_client=http_client)
-                card = await client.get_agent_card()
-                status_info.append(f"✅ Inventory Agent: {card.name} (Online)")
-            except Exception:
-                status_info.append("❌ Inventory Agent: Offline")
-            
-            # Check customer service agent
-            try:
-                client = A2AClient(url="http://localhost:8002", httpx_client=http_client)
-                card = await client.get_agent_card()
-                status_info.append(f"✅ Customer Service Agent: {card.name} (Online)")
-            except Exception:
-                status_info.append("❌ Customer Service Agent: Offline")
-        
-        return "\n".join(status_info)
-        
-    except Exception as e:
-        return f"Error checking agent status: {str(e)}"
+                client = await A2AClient.get_client_from_agent_card_url(
+                    httpx_client=hc,
+                    base_url=url
+                )
+                lines.append(f"✅ {name}: Online")
+            except Exception as e:
+                logger.error(f"Error checking {name}: {e}")
+                lines.append(f"❌ {name}: Offline")
+    return "\n".join(lines)
 
 
 class HostAgent:
-    """Host Agent that orchestrates between specialized agents."""
-    
+    """Coordinates between Inventory and Customer Service agents."""
+
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
-    
-    def __init__(self):
+
+    def __init__(self) -> None:
         self._agent = self._build_agent()
         self._user_id = "host_agent_user"
         self._runner = Runner(
@@ -1829,53 +1872,38 @@ class HostAgent:
             session_service=InMemorySessionService(),
             memory_service=InMemoryMemoryService(),
         )
-    
-    def get_processing_message(self) -> str:
+
+    @staticmethod
+    def get_processing_message() -> str:
         return "Coordinating with specialized agents..."
-    
+
     def _build_agent(self) -> Agent:
-        """Build the ADK agent for host coordination."""
         return Agent(
             name="host_agent",
             model="gemini-2.0-flash",
-            description="Host agent that coordinates between customer service and inventory management agents.",
-            instruction="""You are a host agent that coordinates between specialized retail agents. Your role is to:
-
-1. Route customer inquiries to the appropriate specialized agents
-2. Coordinate responses from multiple agents when needed
-3. Provide a unified customer experience
-
-Available agents:
-- Customer Service Agent: Handles orders, returns, store policies, general customer service
-- Inventory Agent: Handles product availability, stock levels, product searches
-
-Use the available tools to:
-- call_customer_service_agent: For order inquiries, returns, store policies, general customer service
-- call_inventory_agent: For product availability, stock checks, product searches  
-- get_agent_status: To check if agents are online
-
-When users ask about:
-- Orders, returns, store hours, general service → Use customer service agent
-- Product availability, stock, product searches → Use inventory agent
-- Complex queries involving both → Use both agents and coordinate responses
-
-Always provide helpful, accurate responses by leveraging the specialized agents.""",
+            description="Host agent orchestrating retail queries.",
+            instruction=(
+                "You are a host agent that coordinates between specialized retail agents.\n\n"
+                "Route queries as follows:\n"
+                "- Order status, returns, store hours → Customer Service Agent\n"
+                "- Product availability, stock levels → Inventory Agent\n"
+                "- For ambiguous queries, use your judgment or ask for clarification\n\n"
+                "Always use the appropriate agent tools to get information."
+            ),
             tools=[
                 call_customer_service_agent,
                 call_inventory_agent,
                 get_agent_status,
             ],
         )
-    
+
     async def stream(self, query: str, session_id: str) -> AsyncIterable[Dict[str, Any]]:
-        """Stream responses from the host agent."""
         try:
             session = await self._runner.session_service.get_session(
                 app_name=self._agent.name,
                 user_id=self._user_id,
                 session_id=session_id,
             )
-            
             if session is None:
                 session = await self._runner.session_service.create_session(
                     app_name=self._agent.name,
@@ -1883,64 +1911,29 @@ Always provide helpful, accurate responses by leveraging the specialized agents.
                     state={},
                     session_id=session_id,
                 )
-            
-            content = types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=query)]
-            )
-            
+
+            content = types.Content(role="user", parts=[types.Part.from_text(text=query)])
+
             async for event in self._runner.run_async(
                 user_id=self._user_id,
                 session_id=session.id,
-                new_message=content
+                new_message=content,
             ):
                 if event.is_final_response():
-                    response = ""
-                    if (event.content and event.content.parts and 
-                        event.content.parts[0].text):
-                        response = "\n".join([
-                            p.text for p in event.content.parts if p.text
-                        ])
-                    elif (event.content and event.content.parts and 
-                          any([p.function_response for p in event.content.parts])):
-                        # Handle function call responses
-                        for part in event.content.parts:
-                            if part.function_response:
-                                response = str(part.function_response.response)
+                    response_txt = ""
+                    if event.content and event.content.parts and event.content.parts[0].text:
+                        response_txt = "\n".join(p.text for p in event.content.parts if p.text)
+                    elif event.content and any(p.function_response for p in event.content.parts):
+                        for p in event.content.parts:
+                            if p.function_response:
+                                response_txt = str(p.function_response.response)
                                 break
-                    
-                    yield {
-                        "is_task_complete": True,
-                        "content": response,
-                    }
+                    yield {"is_task_complete": True, "content": response_txt}
                 else:
-                    yield {
-                        "is_task_complete": False,
-                        "updates": self.get_processing_message(),
-                    }
-        
-        except Exception as e:
-            logger.error(f"Error in host agent stream: {e}")
-            yield {
-                "is_task_complete": True,
-                "content": f"Error coordinating request: {str(e)}",
-            }
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/host_agent/__pycache__/server.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/host_agent/__pycache__/agent_executor.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/host_agent/__pycache__/agent.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/host_agent/__pycache__/__init__.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
+                    yield {"is_task_complete": False, "updates": self.get_processing_message()}
+        except Exception as exc:
+            logger.error("Error in host agent stream: %s", exc, exc_info=True)
+            yield {"is_task_complete": True, "content": f"Error coordinating request: {exc}"}
 
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/customer_service_a2a/server.py ===
 """Customer Service Agent A2A Server."""
@@ -2163,30 +2156,46 @@ class CustomerServiceAgentExecutor(AgentExecutor):
         raise ServerError(error=UnsupportedOperationError())
 
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/customer_service_a2a/agent.py ===
-"""Customer Service Agent using LangGraph and A2A Protocol."""
+"""Customer Service Agent using LangGraph and A2A Protocol.
 
+Fixed version with proper A2A client usage and error handling.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
 import logging
+import re
+import uuid
 from collections.abc import AsyncIterable
 from typing import Any, Dict, List, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+import httpx
+from a2a.client import A2AClient
+from a2a.types import (
+    Message, 
+    Part, 
+    Role, 
+    TextPart,
+    SendMessageRequest,
+    MessageSendParams,
+)
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel
 
-from a2a.client import A2AClient
-from a2a.types import AgentCard, Message, Part, Role, TextPart
-
 logger = logging.getLogger(__name__)
 
-# Memory for conversation state
-memory = MemorySaver()
+# ---------------------------------------------------------------------------
+# Mock data
+# ---------------------------------------------------------------------------
 
-# Mock order data
-ORDERS = {
+ORDERS: Dict[str, Dict[str, Any]] = {
     "ORD-12345": {
         "status": "shipped",
         "tracking_number": "1Z999AA1012345678",
@@ -2194,40 +2203,56 @@ ORDERS = {
         "total": 699.99,
     },
     "ORD-67890": {
-        "status": "processing", 
+        "status": "processing",
         "items": ["Wireless Earbuds Pro", "Cotton T-Shirt"],
         "total": 229.98,
     },
 }
 
-# Store hours
 STORE_HOURS = {
     "monday-friday": "9:00 AM - 9:00 PM",
-    "saturday": "9:00 AM - 10:00 PM", 
+    "saturday": "9:00 AM - 10:00 PM",
     "sunday": "10:00 AM - 7:00 PM",
 }
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _clean_order_id(raw: str) -> str:
+    """Return canonical `ORD-xxxxx` (upper-case, no trailing punctuation)."""
+    oid = re.sub(r"[!?.,]+$", "", raw.strip()).upper()
+    return oid if oid.startswith("ORD-") else f"ORD-{oid.lstrip('ORD-')}"
+
+# ---------------------------------------------------------------------------
+# LangChain tools
+# ---------------------------------------------------------------------------
 
 
 @tool
 def check_order_status(order_id: str) -> str:
-    """Check the status of a customer order."""
+    """Check the status of an order by order ID. Use this when a customer asks about their order."""
+    logger.info(f"Checking order status for: {order_id}")
+    order_id = _clean_order_id(order_id)
     order = ORDERS.get(order_id)
     if not order:
         return f"I couldn't find order {order_id}. Please verify the order number."
     
-    status_msg = f"Order {order_id} is currently {order['status']}."
-    if order["status"] == "shipped" and "tracking_number" in order:
-        status_msg += f" Tracking number: {order['tracking_number']}."
+    parts = [f"Order {order_id} is currently {order['status']}."]
+    if order["status"] == "shipped":
+        parts.append(f"Tracking number: {order['tracking_number']}")
+    parts.append(f"Items: {', '.join(order['items'])}")
+    parts.append(f"Total: ${order['total']}")
     
-    status_msg += f" Items: {', '.join(order['items'])}"
-    status_msg += f" Total: ${order['total']}"
-    
-    return status_msg
+    result = " ".join(parts)
+    logger.info(f"Order status result: {result}")
+    return result
 
 
 @tool
 def get_store_hours(location: str = "main") -> str:
-    """Get store hours for a specific location."""
+    """Get the store hours for a specific location. Use this when asked about store hours or opening times."""
+    logger.info(f"Getting store hours for location: {location}")
     return (
         f"Store hours for {location} location:\n"
         f"Monday-Friday: {STORE_HOURS['monday-friday']}\n"
@@ -2238,85 +2263,126 @@ def get_store_hours(location: str = "main") -> str:
 
 @tool
 def process_return_request(order_id: str, product_name: str, reason: str) -> str:
-    """Process a return request for a product."""
-    return_id = f"RET-{order_id[-5:]}"
+    """Process a return request for a product. Use this when a customer wants to return an item."""
+    logger.info(f"Processing return for order {order_id}, product: {product_name}, reason: {reason}")
+    rid = f"RET-{_clean_order_id(order_id)[-5:]}"
     return (
-        f"Return request {return_id} has been created for {product_name} "
-        f"from order {order_id}. Reason: {reason}. "
-        "You will receive a return shipping label via email within 24 hours."
+        f"Return request {rid} has been created for {product_name} from order {order_id}. "
+        f"Reason: {reason}. You will receive a return shipping label via email within 24 hours."
     )
 
 
-async def call_inventory_agent(query: str) -> str:
-    """Call the inventory agent to check product availability."""
+async def _query_inventory(query: str) -> str:
+    """Internal function to query the inventory agent using proper A2A API."""
     try:
-        # Connect to inventory agent
-        client = A2AClient(url="http://localhost:8001")
+        logger.info(f"Querying inventory agent with: {query}")
         
-        # Create a message
-        message = Message(
-            role=Role.user,
-            parts=[Part(root=TextPart(text=query))]
-        )
-        
-        # Send the message
-        response = await client.send(message)
-        
-        # Extract the response text
-        if response.artifacts and response.artifacts[0].parts:
-            return response.artifacts[0].parts[0].root.text
-        
-        return "Unable to get inventory information at this time."
-        
-    except Exception as e:
-        logger.error(f"Error calling inventory agent: {e}")
-        return "Unable to access inventory information right now."
+        async with httpx.AsyncClient() as hc:
+            # Initialize client properly using agent card
+            client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client=hc,
+                base_url="http://localhost:8001"
+            )
+            
+            # Create message with proper structure
+            message = Message(
+                messageId=str(uuid.uuid4()),
+                role=Role.user,
+                parts=[Part(root=TextPart(text=query))]
+            )
+            
+            # Send using new API
+            request = SendMessageRequest(
+                params=MessageSendParams(message=message)
+            )
+            response = await client.send_message(request)
+            
+            # Log the response structure for debugging
+            logger.debug(f"Response type: {type(response)}")
+            logger.debug(f"Response: {response}")
+            
+            # Extract the actual result from response wrapper
+            if hasattr(response, 'root'):
+                # Response is wrapped in RootModel
+                result = response.root.result
+            else:
+                # Direct response
+                result = response.result if hasattr(response, 'result') else response
+            
+            # Now extract text from the result (which could be Task or Message)
+            if hasattr(result, 'artifacts') and result.artifacts:
+                # Task response with artifacts
+                for artifact in result.artifacts:
+                    if artifact.parts:
+                        for part in artifact.parts:
+                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                return part.root.text
+            elif hasattr(result, 'parts') and result.parts:
+                # Direct Message response
+                for part in result.parts:
+                    if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                        return part.root.text
+            elif hasattr(result, 'status') and hasattr(result.status, 'message'):
+                # Task with status message
+                if result.status.message and hasattr(result.status.message, 'parts'):
+                    for part in result.status.message.parts:
+                        if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                            return part.root.text
+            
+            logger.warning(f"Unable to extract text from response: {result}")
+            return "Unable to get inventory information."
+            
+    except Exception as exc:
+        logger.error(f"Inventory agent error: {exc}", exc_info=True)
+        return f"Inventory system error: {str(exc)}"
 
 
 @tool
 async def check_inventory(query: str) -> str:
-    """Check inventory for product availability and information."""
-    return await call_inventory_agent(query)
+    """Check product inventory and availability. Use this when asked about product availability or stock."""
+    return await _query_inventory(query)
+
+# ---------------------------------------------------------------------------
+# LangGraph wiring
+# ---------------------------------------------------------------------------
+
+memory = MemorySaver()
 
 
 class ConversationState(BaseModel):
-    """State for the customer service conversation."""
+    """State for the conversation."""
     messages: List[Any]
-    need_inventory_check: bool = False
-
-
-class ResponseFormat(BaseModel):
-    """Response format for the customer service agent."""
-    status: Literal["input_required", "completed", "error"] = "completed"
-    message: str
-    need_inventory_check: bool = False
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class CustomerServiceAgent:
-    """Customer Service Agent using LangGraph."""
-    
-    SYSTEM_INSTRUCTION = (
-        "You are a helpful customer service agent for a retail store. "
-        "You can help customers with:\n"
-        "1. Order status inquiries\n"
-        "2. Product availability questions (use check_inventory tool)\n"
-        "3. Return requests\n"
-        "4. Store hours\n"
-        "5. General customer service questions\n\n"
-        "When customers ask about products, inventory, or availability, "
-        "use the check_inventory tool to get current information.\n"
-        "Be friendly, helpful, and professional in all interactions.\n"
-        "If you need more information from the customer, set status to 'input_required'.\n"
-        "If there's an error, set status to 'error'.\n"
-        "Otherwise, set status to 'completed'."
-    )
-    
+    """LangGraph customer-service agent."""
+
+    SYSTEM_INSTRUCTION = """You are a helpful customer service agent for an online retail store. 
+
+Your primary responsibilities:
+1. Check order status when customers ask about their orders
+2. Provide store hours information
+3. Process return requests
+4. Check product inventory by querying the inventory system
+
+You have access to the following tools:
+- check_order_status: Use this to look up order information
+- get_store_hours: Use this to provide store hours
+- process_return_request: Use this to initiate returns
+- check_inventory: Use this to check product availability
+
+Always use the appropriate tool when handling customer requests. Be helpful, professional, and concise."""
+
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
-    
-    def __init__(self):
+
+    def __init__(self) -> None:
         self.model = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
-            temperature=0.7,
+            model="gemini-2.0-flash", 
+            temperature=0.3,  # Lower temperature for more consistent responses
+            convert_system_message_to_human=True
         )
         self.tools = [
             check_order_status,
@@ -2325,17 +2391,13 @@ class CustomerServiceAgent:
             check_inventory,
         ]
         self.graph = self._build_graph()
-    
+
     def _build_graph(self):
-        """Build the LangGraph conversation flow."""
-        # Bind tools to the model
-        model_with_tools = self.model.bind_tools(self.tools)
+        """Build the LangGraph state machine."""
+        workflow = StateGraph(ConversationState)
         
         # Create tool node
         tool_node = ToolNode(self.tools)
-        
-        # Create state graph
-        workflow = StateGraph(ConversationState)
         
         # Add nodes
         workflow.add_node("agent", self._call_model)
@@ -2347,9 +2409,9 @@ class CustomerServiceAgent:
         # Add conditional edges
         workflow.add_conditional_edges(
             "agent",
-            self._should_continue,
+            self._should_use_tools,
             {
-                "continue": "tools",
+                "tools": "tools",
                 "end": END,
             }
         )
@@ -2357,117 +2419,136 @@ class CustomerServiceAgent:
         # Add edge from tools back to agent
         workflow.add_edge("tools", "agent")
         
+        # Compile with memory
         return workflow.compile(checkpointer=memory)
-    
-    def _call_model(self, state: ConversationState):
-        """Call the model with current state."""
-        messages = state["messages"]
+
+    def _call_model(self, state: ConversationState) -> Dict[str, Any]:
+        """Call the LLM with the current conversation state."""
+        messages = state.messages
         
-        # Add system message if not present
+        # Ensure we have system message
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=self.SYSTEM_INSTRUCTION)] + messages
         
-        # Get model response
-        model_with_tools = self.model.bind_tools(self.tools)
-        response = model_with_tools.invoke(messages)
+        logger.debug(f"Calling model with {len(messages)} messages")
         
-        return {"messages": messages + [response]}
-    
-    def _should_continue(self, state: ConversationState):
-        """Determine if we should continue to tools or end."""
-        last_message = state["messages"][-1]
-        
-        # If there are tool calls, continue to tools
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            return "continue"
-        
-        return "end"
-    
-    async def stream(
-        self, 
-        query: str, 
-        session_id: str
-    ) -> AsyncIterable[Dict[str, Any]]:
-        """Stream responses from the customer service agent."""
+        # Bind tools and invoke
         try:
+            response = self.model.bind_tools(self.tools).invoke(messages)
+            logger.debug(f"Model response: {response}")
+            return {"messages": messages + [response]}
+        except Exception as e:
+            logger.error(f"Error calling model: {e}", exc_info=True)
+            error_msg = AIMessage(content="I apologize, but I encountered an error processing your request. Please try again.")
+            return {"messages": messages + [error_msg]}
+
+    def _should_use_tools(self, state: ConversationState) -> Literal["tools", "end"]:
+        """Determine if we should use tools or end the conversation."""
+        messages = state.messages
+        last_message = messages[-1]
+        
+        # Check if the last message has tool calls
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            logger.debug(f"Using tools: {[tc.get('name') for tc in last_message.tool_calls]}")
+            return "tools"
+        
+        logger.debug("No tool calls, ending conversation")
+        return "end"
+
+    async def stream(self, query: str, session_id: str) -> AsyncIterable[Dict[str, Any]]:
+        """Stream responses for the given query."""
+        try:
+            logger.info(f"Customer service agent processing query: {query}")
+            
+            # Initialize conversation
             config = {"configurable": {"thread_id": session_id}}
+            messages = [
+                SystemMessage(content=self.SYSTEM_INSTRUCTION),
+                HumanMessage(content=query)
+            ]
+            initial_state = ConversationState(messages=messages)
             
-            # Create initial state
-            initial_state = ConversationState(
-                messages=[HumanMessage(content=query)]
-            )
+            # Track if we've sent any updates
+            has_sent_update = False
             
-            # Run the graph
+            # Stream the graph execution
             async for event in self.graph.astream(
-                initial_state.dict(),
+                initial_state.dict(), 
                 config=config,
                 stream_mode="values"
             ):
-                if "messages" in event:
-                    last_message = event["messages"][-1]
+                if "messages" not in event:
+                    continue
                     
-                    # If it's an AI message with tool calls
-                    if isinstance(last_message, AIMessage) and hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                        # Indicate we're processing
+                messages = event["messages"]
+                if not messages:
+                    continue
+                
+                last_message = messages[-1]
+                logger.debug(f"Stream event - message type: {type(last_message).__name__}")
+                
+                # Handle tool calls
+                if isinstance(last_message, AIMessage) and hasattr(last_message, "tool_calls") and last_message.tool_calls:
+                    if not has_sent_update:
+                        has_sent_update = True
                         yield {
                             "is_task_complete": False,
                             "require_user_input": False,
-                            "content": "Let me check that for you...",
+                            "content": "Looking up information..."
                         }
-                    
-                    # If it's the final AI message without tool calls
-                    elif isinstance(last_message, AIMessage) and (
-                        not hasattr(last_message, "tool_calls") or 
-                        not last_message.tool_calls
-                    ):
-                        # This is the final response
-                        yield {
-                            "is_task_complete": True,
-                            "require_user_input": False,
-                            "content": last_message.content,
-                        }
-                        break
+                
+                # Handle tool responses
+                elif isinstance(last_message, ToolMessage):
+                    yield {
+                        "is_task_complete": False,
+                        "require_user_input": False,
+                        "content": "Processing..."
+                    }
+                
+                # Handle final AI response
+                elif isinstance(last_message, AIMessage) and last_message.content:
+                    logger.info(f"Final response: {last_message.content}")
+                    yield {
+                        "is_task_complete": True,
+                        "require_user_input": False,
+                        "content": last_message.content
+                    }
+                    break
             
-        except Exception as e:
-            logger.error(f"Error in customer service agent stream: {e}")
+        except Exception as exc:
+            # Log the full exception details
+            logger.error(f"Customer service stream error: {exc}", exc_info=True)
+            
+            # Return more specific error information for debugging
+            error_message = f"Error processing request: {type(exc).__name__}: {str(exc)}"
             yield {
                 "is_task_complete": True,
                 "require_user_input": False,
-                "content": f"I apologize, but I encountered an error: {str(e)}",
+                "content": error_message
             }
-    
+
     def invoke(self, query: str, session_id: str) -> str:
-        """Non-streaming invoke method."""
+        """Synchronous invoke for testing."""
         config = {"configurable": {"thread_id": session_id}}
+        messages = [
+            SystemMessage(content=self.SYSTEM_INSTRUCTION),
+            HumanMessage(content=query)
+        ]
+        initial_state = ConversationState(messages=messages)
         
-        initial_state = ConversationState(
-            messages=[HumanMessage(content=query)]
-        )
-        
-        result = self.graph.invoke(initial_state.dict(), config)
-        
-        # Get the last AI message
-        for message in reversed(result["messages"]):
-            if isinstance(message, AIMessage):
-                return message.content
-        
-        return "I apologize, but I couldn't process your request."
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/customer_service_a2a/__pycache__/server.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/customer_service_a2a/__pycache__/agent_executor.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/customer_service_a2a/__pycache__/agent.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/agents/customer_service_a2a/__pycache__/__init__.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
+        try:
+            result = self.graph.invoke(initial_state.dict(), config)
+            messages = result.get("messages", [])
+            
+            # Find the last AI message
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage) and msg.content:
+                    return msg.content
+            
+            return "I apologize, but I couldn't process your request."
+        except Exception as e:
+            logger.error(f"Error in invoke: {e}", exc_info=True)
+            return f"Error: {type(e).__name__}: {str(e)}"
 
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/server/demo_server.py ===
 """Demo server implementation following A2A documentation pattern."""
@@ -2550,10 +2631,6 @@ class DemoServer:
 # Global demo server instance
 demo_server = DemoServer()
 
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/server/__pycache__/demo_server.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/utils/__init__.py ===
 
 
@@ -2574,9 +2651,8 @@ logger = logging.getLogger(__name__)
 async def get_agent_card(agent_url: str) -> Optional[AgentCard]:
     """Get agent card from an A2A server."""
     try:
-        async with httpx.AsyncClient() as http_client:
-            client = A2AClient(url=agent_url, httpx_client=http_client)
-            return await client.get_agent_card()
+        client = A2AClient(url=agent_url)
+        return await client.get_agent_card()
     except Exception as e:
         logger.error(f"Failed to get agent card from {agent_url}: {e}")
         return None
@@ -2589,21 +2665,20 @@ async def send_message_to_agent(
 ) -> Optional[str]:
     """Send a message to an A2A agent and get response."""
     try:
-        async with httpx.AsyncClient() as http_client:
-            client = A2AClient(url=agent_url, httpx_client=http_client)
-            
-            message = Message(
-                role=Role.user,
-                parts=[Part(root=TextPart(text=message_text))]
-            )
-            
-            response = await client.send(message)
-            
-            if response.artifacts and response.artifacts[0].parts:
-                return response.artifacts[0].parts[0].root.text
-            
-            return None
-            
+        client = A2AClient(url=agent_url)
+        
+        message = Message(
+            role=Role.user,
+            parts=[Part(root=TextPart(text=message_text))]
+        )
+        
+        response = await client.send(message)
+        
+        if response.artifacts and response.artifacts[0].parts:
+            return response.artifacts[0].parts[0].root.text
+        
+        return None
+        
     except Exception as e:
         logger.error(f"Failed to send message to {agent_url}: {e}")
         return None
@@ -2623,15 +2698,10 @@ async def discover_agents(agent_urls: list[str]) -> Dict[str, AgentCard]:
     """Discover multiple agents and return their cards."""
     agents = {}
     
-    async with httpx.AsyncClient() as http_client:
-        for url in agent_urls:
-            try:
-                client = A2AClient(url=url, httpx_client=http_client)
-                card = await client.get_agent_card()
-                if card:
-                    agents[url] = card
-            except Exception as e:
-                logger.error(f"Failed to discover agent at {url}: {e}")
+    for url in agent_urls:
+        card = await get_agent_card(url)
+        if card:
+            agents[url] = card
     
     return agents
 
@@ -2646,18 +2716,6 @@ class A2AManager:
             "customer_service": "http://localhost:8002",
         }
         self.agent_cards = {}
-        self._http_client: Optional[httpx.AsyncClient] = None
-    
-    async def __aenter__(self):
-        """Async context manager entry."""
-        self._http_client = httpx.AsyncClient()
-        await self.initialize()
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        if self._http_client:
-            await self._http_client.aclose()
     
     async def initialize(self):
         """Initialize the manager by discovering agents."""
@@ -2688,18 +2746,6 @@ class A2AManager:
         if url:
             return self.agent_cards.get(url)
         return None
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/utils/__pycache__/a2a_utils.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/utils/__pycache__/__init__.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
-
-=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/backend/__pycache__/__init__.cpython-311.pyc ===
-[Could not read file: 'utf-8' codec can't decode byte 0xa7 in position 0: invalid start byte]
-
 
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/scripts/start_a2a_demo.sh ===
 #!/usr/bin/env bash
@@ -3373,6 +3419,220 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+=== /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/scripts/test_agents.py ===
+#!/usr/bin/env python3
+"""Test script to verify all A2A agents are working correctly."""
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+# Add project root to path
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import httpx
+from a2a.client import A2AClient
+from a2a.types import (
+    Message,
+    Part,
+    Role,
+    TextPart,
+    SendMessageRequest,
+    MessageSendParams,
+)
+
+
+async def test_agent(name: str, url: str, test_query: str):
+    """Test a single agent."""
+    print(f"\n🧪 Testing {name} at {url}")
+    print(f"   Query: {test_query}")
+    
+    try:
+        async with httpx.AsyncClient() as hc:
+            # Get agent card
+            print("   📋 Fetching agent card...")
+            client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client=hc,
+                base_url=url
+            )
+            
+            if hasattr(client, 'agent_card') and client.agent_card:
+                print(f"   ✅ Agent: {client.agent_card.name}")
+                print(f"   📝 Description: {client.agent_card.description}")
+            
+            # Send test message
+            print("   📤 Sending test message...")
+            message = Message(
+                messageId="test-001",
+                role=Role.user,
+                parts=[Part(root=TextPart(text=test_query))]
+            )
+            
+            request = SendMessageRequest(
+                params=MessageSendParams(message=message)
+            )
+            response = await client.send_message(request)
+            
+            # Extract response
+            print("   📥 Response received:")
+            if hasattr(response, 'root'):
+                result = response.root.result
+            else:
+                result = response.result if hasattr(response, 'result') else response
+            
+            # Try to extract text
+            response_text = None
+            if hasattr(result, 'artifacts') and result.artifacts:
+                for artifact in result.artifacts:
+                    if artifact.parts:
+                        for part in artifact.parts:
+                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                                response_text = part.root.text
+                                break
+            elif hasattr(result, 'parts') and result.parts:
+                for part in result.parts:
+                    if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                        response_text = part.root.text
+                        break
+            elif hasattr(result, 'status') and hasattr(result.status, 'message'):
+                if result.status.message and hasattr(result.status.message, 'parts'):
+                    for part in result.status.message.parts:
+                        if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                            response_text = part.root.text
+                            break
+            
+            if response_text:
+                print(f"   💬 Response: {response_text[:200]}...")
+                print("   ✅ Agent test passed!")
+            else:
+                print(f"   ⚠️  No text response extracted")
+                print(f"   📊 Response structure: {type(result)}")
+                
+    except Exception as e:
+        print(f"   ❌ Error: {type(e).__name__}: {str(e)}")
+        return False
+    
+    return True
+
+
+async def test_direct_api_call(name: str, url: str, query: str):
+    """Test agent using direct JSON-RPC API call."""
+    print(f"\n🔧 Testing {name} via direct API call")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "parts": [{
+                            "type": "text",
+                            "text": query
+                        }]
+                    }
+                },
+                "id": 1
+            }
+            
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            
+            result = response.json()
+            print(f"   📥 Raw response: {json.dumps(result, indent=2)[:500]}...")
+            
+            if "result" in result:
+                print("   ✅ Direct API test passed!")
+                return True
+            elif "error" in result:
+                print(f"   ❌ API Error: {result['error']}")
+                return False
+                
+    except Exception as e:
+        print(f"   ❌ Error: {type(e).__name__}: {str(e)}")
+        return False
+
+
+async def main():
+    """Run all tests."""
+    print("🧪 A2A Retail Demo - Agent Test Suite")
+    print("=" * 60)
+    
+    agents = [
+        ("Inventory Agent", "http://localhost:8001", "Do you have Smart TVs in stock?"),
+        ("Customer Service Agent", "http://localhost:8002", "What are your store hours?"),
+        ("Host Agent", "http://localhost:8000", "What's the status of order ORD-12345?"),
+    ]
+    
+    # First, check if agents are accessible
+    print("\n🔍 Checking agent availability...")
+    available_agents = []
+    
+    async with httpx.AsyncClient() as client:
+        for name, url, _ in agents:
+            try:
+                resp = await client.get(f"{url}/.well-known/agent.json", timeout=5)
+                if resp.status_code == 200:
+                    print(f"   ✅ {name}: Online")
+                    available_agents.append((name, url, _))
+                else:
+                    print(f"   ❌ {name}: HTTP {resp.status_code}")
+            except Exception as e:
+                print(f"   ❌ {name}: {type(e).__name__}")
+    
+    if not available_agents:
+        print("\n❌ No agents are available. Please start the agents first.")
+        print("   Run: ./scripts/start_a2a_demo.sh")
+        sys.exit(1)
+    
+    # Test each available agent
+    print(f"\n📊 Testing {len(available_agents)} available agents...")
+    
+    passed = 0
+    failed = 0
+    
+    for name, url, query in available_agents:
+        # Test using A2A client
+        if await test_agent(name, url, query):
+            passed += 1
+        else:
+            failed += 1
+            
+            # If A2A client fails, try direct API
+            print(f"\n   🔄 Retrying with direct API call...")
+            if await test_direct_api_call(name, url, query):
+                print("   ℹ️  Direct API works but A2A client failed")
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("📊 Test Summary:")
+    print(f"   ✅ Passed: {passed}")
+    print(f"   ❌ Failed: {failed}")
+    print(f"   📈 Success Rate: {(passed/(passed+failed)*100):.1f}%")
+    
+    if failed > 0:
+        print("\n💡 Troubleshooting tips:")
+        print("   1. Check agent logs in ./logs/")
+        print("   2. Ensure GOOGLE_API_KEY is set in .env")
+        print("   3. Verify all dependencies are installed")
+        print("   4. Try testing agents individually")
+        sys.exit(1)
+    else:
+        print("\n🎉 All tests passed!")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Test interrupted")
+    except Exception as e:
+        print(f"\n❌ Test suite error: {e}")
+        sys.exit(1)
 
 === /Users/abdulzedan/Documents/PersonalProjects/a2a-retail-demo/scripts/utils/debug_imports.py ===
 #!/usr/bin/env python3
