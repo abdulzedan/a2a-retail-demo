@@ -15,7 +15,7 @@ if os.path.exists(gitignore_path):
             ignore_patterns.add(line)
 
 # Always ignore .venv and the output file
-ignore_patterns.update({".venv", "all_files_with_content.txt"})
+ignore_patterns.update({".venv", "all_files_with_content.txt", ".git", "__pycache__"})
 
 def should_ignore(rel_path):
     for pattern in ignore_patterns:

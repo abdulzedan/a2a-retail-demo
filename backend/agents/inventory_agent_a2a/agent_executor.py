@@ -13,10 +13,12 @@ from a2a.types import (
     Task,
     TaskState,
     TextPart,
+    DataPart,
     UnsupportedOperationError,
 )
 from a2a.utils import (
     new_agent_text_message,
+    new_agent_parts_message,
     new_task,
 )
 from a2a.utils.errors import ServerError
@@ -38,8 +40,8 @@ class InventoryAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         """Execute inventory agent request."""
-        error = self._validate_request(context)
-        if error:
+        # Validate request
+        if not context.message or not context.get_user_input():
             raise ServerError(error=InvalidParamsError())
         
         query = context.get_user_input()
@@ -53,44 +55,79 @@ class InventoryAgentExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task.id, task.contextId)
         
         try:
-            async for item in self.agent.stream(query, task.contextId):
-                is_task_complete = item["is_task_complete"]
+            # Start working
+            updater.start_work()
+            
+            # Execute agent logic
+            async for event in self.agent.stream(query, task.contextId):
+                event_type = event.get('type')
                 
-                if not is_task_complete:
-                    # Update status with progress message
+                if event_type == 'status':
+                    # Update status
                     updater.update_status(
                         TaskState.working,
                         new_agent_text_message(
-                            item["updates"],
+                            event['message'],
                             task.contextId,
                             task.id,
                         ),
                     )
-                else:
-                    # Task is complete, add artifact and finish
-                    updater.add_artifact(
-                        [Part(root=TextPart(text=item["content"]))],
-                        name="inventory_result",
+                
+                elif event_type == 'tool_call':
+                    # Tool is being called
+                    updater.update_status(
+                        TaskState.working,
+                        new_agent_text_message(
+                            f"Calling {event['tool_name']}: {event.get('message', 'Processing...')}",
+                            task.contextId,
+                            task.id,
+                        ),
                     )
+                
+                elif event_type == 'result':
+                    # Final result
+                    content = event['content']
+                    
+                    # Check if it's JSON data or plain text
+                    if isinstance(content, dict):
+                        parts = [Part(root=DataPart(data=content))]
+                    else:
+                        parts = [Part(root=TextPart(text=str(content)))]
+                    
+                    # Add artifact
+                    updater.add_artifact(
+                        parts,
+                        name='inventory_result',
+                    )
+                    
+                    # Complete task
                     updater.complete()
                     break
                     
+                elif event_type == 'error':
+                    # Error occurred
+                    updater.failed(
+                        new_agent_text_message(
+                            f"Error: {event['message']}",
+                            task.contextId,
+                            task.id,
+                        )
+                    )
+                    break
+                    
         except Exception as e:
-            logger.error(f"Error executing inventory agent: {e}")
-            raise ServerError(error=InternalError()) from e
-    
-    def _validate_request(self, context: RequestContext) -> bool:
-        """Validate the incoming request."""
-        # Basic validation - ensure we have user input
-        try:
-            user_input = context.get_user_input()
-            return not user_input or not user_input.strip()
-        except Exception:
-            return True
+            logger.error(f"Error executing inventory agent: {e}", exc_info=True)
+            updater.failed(
+                new_agent_text_message(
+                    f"Internal error: {str(e)}",
+                    task.contextId,
+                    task.id,
+                )
+            )
     
     async def cancel(
         self,
-        request: RequestContext,
+        context: RequestContext,
         event_queue: EventQueue
     ) -> Task | None:
         """Cancel a task - not supported for this agent."""

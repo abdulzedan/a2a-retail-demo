@@ -28,7 +28,7 @@ class MissingAPIKeyError(Exception):
 
 
 @click.command()
-@click.option("--host", default="localhost", help="Host to run the server on")
+@click.option("--host", default="0.0.0.0", help="Host to run the server on")
 @click.option("--port", default=8001, help="Port to run the server on")
 def main(host: str, port: int):
     """Start the Inventory Agent A2A server."""
@@ -57,11 +57,11 @@ def main(host: str, port: int):
             ],
         )
         
-        # Create agent card
+        # Create agent card - use localhost for URL to ensure consistent access
         agent_card = AgentCard(
             name="Inventory Management Agent",
             description="Manages retail product inventory, stock levels, and availability. Can check product availability, search products by various criteria, and monitor low stock items.",
-            url=f"http://{host}:{port}/",
+            url=f"http://localhost:{port}/",
             version="1.0.0",
             defaultInputModes=InventoryAgent.SUPPORTED_CONTENT_TYPES,
             defaultOutputModes=InventoryAgent.SUPPORTED_CONTENT_TYPES,
