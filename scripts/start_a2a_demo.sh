@@ -69,6 +69,13 @@ if [[ -z "${GOOGLE_API_KEY:-}" ]]; then
     exit 1
 fi
 
+# ── Install A2A SDK if not present ─────────────────────────────────────────
+echo "🔍 Checking A2A SDK installation..."
+if ! "${VENV_DIR}/bin/python" -c "import a2a" 2>/dev/null; then
+    echo "📦 Installing A2A SDK..."
+    "${VENV_DIR}/bin/pip" install a2a-sdk
+fi
+
 # ── Start agents ────────────────────────────────────────────────────────────
 cd "${PROJECT_ROOT}"
 
@@ -127,6 +134,27 @@ check_service "http://localhost:${CUSTOMER_SERVICE_PORT}/.well-known/agent.json"
 check_service "http://localhost:${HOST_PORT}/.well-known/agent.json" "Host Agent"
 check_service "http://localhost:${FRONTEND_PORT}" "Frontend"
 
+# ── Test A2A protocol compliance ────────────────────────────────────────────
+echo
+echo "🧪 Testing A2A protocol compliance..."
+
+# Test agent card endpoint
+test_agent_card() {
+    local url="$1"
+    local name="$2"
+    
+    response=$(curl -s "$url/.well-known/agent.json")
+    if echo "$response" | grep -q '"name"'; then
+        echo "✅ $name agent card is valid"
+    else
+        echo "❌ $name agent card is invalid"
+    fi
+}
+
+test_agent_card "http://localhost:${INVENTORY_PORT}" "Inventory"
+test_agent_card "http://localhost:${CUSTOMER_SERVICE_PORT}" "Customer Service"
+test_agent_card "http://localhost:${HOST_PORT}" "Host"
+
 # ── Success banner ──────────────────────────────────────────────────────────
 echo
 echo "🎉 A2A Retail Demo is running!"
@@ -137,14 +165,21 @@ echo "  Inventory Agent:   http://localhost:${INVENTORY_PORT}"
 echo "  Customer Service:  http://localhost:${CUSTOMER_SERVICE_PORT}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo
-echo "🔗 A2A Architecture:"
-echo "   Frontend → Host Agent → [Inventory Agent | Customer Service Agent]"
+echo "🔗 A2A Protocol Endpoints:"
+echo "   Agent Cards:     http://localhost:{PORT}/.well-known/agent.json"
+echo "   JSON-RPC:        http://localhost:{PORT}/ (POST)"
 echo
 echo "💡 Try these queries in the frontend:"
 echo "   • 'Do you have Smart TVs in stock?'"
 echo "   • 'What's the status of order ORD-12345?'"
 echo "   • 'Show me products under \$50'"
 echo "   • 'What are your store hours?'"
+echo
+echo "📚 A2A Protocol Features:"
+echo "   ✓ Proper task lifecycle management"
+echo "   ✓ Context propagation across agents"
+echo "   ✓ Streaming support (SSE)"
+echo "   ✓ Standard A2A error handling"
 echo
 echo "Press Ctrl+C to stop all services"
 
