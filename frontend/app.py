@@ -33,20 +33,21 @@ sys.path.insert(0, str(ROOT))
 @me.stateclass
 class AppState:
     """Application state."""
+
     messages: List[dict] = field(default_factory=list)
     current_input: str = ""
     is_loading: bool = False
     error_message: Optional[str] = None
-    
+
     # Agent status
     host_agent_online: bool = False
     inventory_agent_online: bool = False
     customer_service_agent_online: bool = False
-    
+
     # Configuration
     host_agent_url: str = "http://localhost:8000"
     show_debug: bool = False
-    
+
     # Context management
     context_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -58,28 +59,25 @@ async def check_agent_status_async() -> dict:
         "inventory": "http://localhost:8001",
         "customer_service": "http://localhost:8002",
     }
-    
+
     status = {}
-    
+
     async with httpx.AsyncClient(timeout=5.0) as client:
         for name, url in agents.items():
             try:
                 # Try to get agent card
-                a2a_client = await A2AClient.get_client_from_agent_card_url(
-                    httpx_client=client,
-                    base_url=url
-                )
+                a2a_client = await A2AClient.get_client_from_agent_card_url(httpx_client=client, base_url=url)
                 status[name] = True
             except Exception:
                 status[name] = False
-    
+
     return status
 
 
 def check_agent_status():
     """Check the status of all agents."""
     state = me.state(AppState)
-    
+
     # Run async function synchronously
     try:
         status = asyncio.run(check_agent_status_async())
@@ -96,37 +94,34 @@ async def send_message_to_host_async(message_text: str, context_id: str) -> str:
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Get A2A client
             a2a_client = await A2AClient.get_client_from_agent_card_url(
-                httpx_client=client,
-                base_url="http://localhost:8000"
+                httpx_client=client, base_url="http://localhost:8000"
             )
-            
+
             # Create message
             message = Message(
                 messageId=str(uuid.uuid4()),
                 contextId=context_id,
                 role=Role.user,
-                parts=[Part(root=TextPart(text=message_text))]
+                parts=[Part(root=TextPart(text=message_text))],
             )
-            
-            # Create request
+
+            # Create request with required id field
             request = SendMessageRequest(
+                id=str(uuid.uuid4()),  # Add the required id field
                 params=MessageSendParams(
-                    message=message,
-                    configuration=MessageSendConfiguration(
-                        acceptedOutputModes=["text/plain", "text"]
-                    )
-                )
+                    message=message, configuration=MessageSendConfiguration(acceptedOutputModes=["text/plain", "text"])
+                ),
             )
-            
+
             # Send message
             response = await a2a_client.send_message(request)
-            
+
             # Extract response
-            if hasattr(response, 'root'):
+            if hasattr(response, "root"):
                 result = response.root.result
             else:
-                result = response.result if hasattr(response, 'result') else response
-            
+                result = response.result if hasattr(response, "result") else response
+
             # Handle different response types
             if isinstance(result, Task):
                 # Task response
@@ -135,21 +130,21 @@ async def send_message_to_host_async(message_text: str, context_id: str) -> str:
                     texts = []
                     for artifact in result.artifacts:
                         for part in artifact.parts:
-                            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                            if hasattr(part, "root") and hasattr(part.root, "text"):
                                 texts.append(part.root.text)
                     return "\n".join(texts) if texts else "Task completed with no text response"
                 elif result.status and result.status.message:
                     return get_message_text(result.status.message)
                 else:
                     return f"Task {result.id} status: {result.status.state if result.status else 'unknown'}"
-            
+
             elif isinstance(result, Message):
                 # Direct message response
                 return get_message_text(result)
-            
+
             else:
                 return "Received response but unable to extract text"
-                
+
     except Exception as e:
         return f"Error communicating with host agent: {str(e)}"
 
@@ -162,10 +157,10 @@ def on_input_change(e: me.InputEvent):
 async def on_send_message(e: me.ClickEvent):
     """Handle send message button click."""
     state = me.state(AppState)
-    
+
     if not state.current_input.strip():
         return
-    
+
     # Add user message
     user_message = {
         "role": "user",
@@ -173,26 +168,26 @@ async def on_send_message(e: me.ClickEvent):
         "timestamp": datetime.now().isoformat(),
     }
     state.messages.append(user_message)
-    
+
     message_text = state.current_input
     state.current_input = ""
     state.is_loading = True
     state.error_message = None
-    
+
     yield  # Update UI to show user message
-    
+
     try:
         # Send to host agent
         response = await send_message_to_host_async(message_text, state.context_id)
-        
+
         # Add agent response
         agent_message = {
-            "role": "agent", 
+            "role": "agent",
             "content": response,
             "timestamp": datetime.now().isoformat(),
         }
         state.messages.append(agent_message)
-        
+
     except Exception as e:
         state.error_message = f"Error: {str(e)}"
     finally:
@@ -224,7 +219,7 @@ def agent_status_card(name: str, online: bool, port: int):
     """Render an agent status card."""
     color = "#4caf50" if online else "#f44336"
     status = "Online" if online else "Offline"
-    
+
     with me.box(
         style=me.Style(
             border=me.Border.all(me.BorderSide(width=2, color=color)),
@@ -244,13 +239,13 @@ def chat_message_bubble(message: dict):
     align = "flex-end" if is_user else "flex-start"
     bg = "#1976d2" if is_user else "#e0e0e0"
     fg = "white" if is_user else "black"
-    
+
     timestamp = message.get("timestamp", "")
     try:
         when = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).strftime("%H:%M:%S")
     except:
         when = ""
-    
+
     with me.box(style=me.Style(display="flex", justify_content=align, margin=me.Margin(bottom=10))):
         with me.box(
             style=me.Style(
@@ -266,7 +261,7 @@ def chat_message_bubble(message: dict):
                 me.text(message["content"])
             else:
                 me.markdown(message["content"])
-            
+
             if when:
                 me.text(when, type="caption", style=me.Style(opacity=0.7, margin=me.Margin(top=5)))
 
@@ -275,11 +270,11 @@ def chat_message_bubble(message: dict):
 def main_page():
     """Main application page."""
     state = me.state(AppState)
-    
+
     # Check agent status on page load
     if not any([state.host_agent_online, state.inventory_agent_online, state.customer_service_agent_online]):
         check_agent_status()
-    
+
     with me.box(style=me.Style(padding=me.Padding.all(20))):
         me.text("🛍️ A2A Retail Demo", type="headline-4", style=me.Style(margin=me.Margin(bottom=10)))
         me.text(
@@ -287,7 +282,7 @@ def main_page():
             type="body-1",
             style=me.Style(margin=me.Margin(bottom=30), color="gray"),
         )
-        
+
         # Agent status section
         with me.box(
             style=me.Style(
@@ -302,12 +297,16 @@ def main_page():
                 agent_status_card("Host Agent", state.host_agent_online, 8000)
                 agent_status_card("Inventory Agent", state.inventory_agent_online, 8001)
                 agent_status_card("Customer Service", state.customer_service_agent_online, 8002)
-            
+
             with me.box(style=me.Style(margin=me.Margin(top=10))):
                 me.button("Refresh Status", on_click=on_refresh_status, type="stroked")
-                me.button("Clear Chat", on_click=on_clear_chat, type="stroked", style=me.Style(margin=me.Margin(left=10)))
-                me.button("Debug Info", on_click=on_toggle_debug, type="stroked", style=me.Style(margin=me.Margin(left=10)))
-        
+                me.button(
+                    "Clear Chat", on_click=on_clear_chat, type="stroked", style=me.Style(margin=me.Margin(left=10))
+                )
+                me.button(
+                    "Debug Info", on_click=on_toggle_debug, type="stroked", style=me.Style(margin=me.Margin(left=10))
+                )
+
         # Error display
         if state.error_message:
             with me.box(
@@ -320,7 +319,7 @@ def main_page():
                 )
             ):
                 me.text(state.error_message, style=me.Style(color="#d32f2f"))
-        
+
         # Chat area
         with me.box(
             style=me.Style(
@@ -352,10 +351,10 @@ def main_page():
                     me.text("• 'What's the status of order ORD-12345?'", style=me.Style(color="gray"))
                     me.text("• 'Show me wireless earbuds under $200'", style=me.Style(color="gray"))
                     me.text("• 'What are your store hours?'", style=me.Style(color="gray"))
-                
+
                 for message in state.messages:
                     chat_message_bubble(message)
-                
+
                 # Loading indicator
                 if state.is_loading:
                     with me.box(style=me.Style(display="flex", justify_content="flex-start", margin=me.Margin(top=10))):
@@ -367,7 +366,7 @@ def main_page():
                             )
                         ):
                             me.text("🤔 Processing your request via A2A protocol...", style=me.Style(color="gray"))
-            
+
             # Input area
             with me.box(style=me.Style(display="flex", gap=10, align_items="center")):
                 me.input(
@@ -383,7 +382,7 @@ def main_page():
                     type="raised",
                     disabled=state.is_loading or not state.current_input.strip(),
                 )
-        
+
         # Debug information
         if state.show_debug:
             with me.box(
@@ -400,7 +399,7 @@ def main_page():
                 me.text(f"Context ID: {state.context_id}")
                 me.text(f"Total Messages: {len(state.messages)}")
                 me.text(f"Loading: {state.is_loading}")
-                
+
                 me.text("A2A Architecture:", style=me.Style(margin=me.Margin(top=10), font_weight="bold"))
                 me.text("Frontend → Host Agent (8000) → [Inventory Agent (8001) | Customer Service Agent (8002)]")
 
@@ -408,16 +407,17 @@ def main_page():
 if __name__ == "__main__":
     import uvicorn
     from werkzeug.serving import run_simple
-    
+
     HOST = os.environ.get("MESOP_HOST", "127.0.0.1")
     PORT = int(os.environ.get("MESOP_PORT", "8080"))
-    
+
     print(f"🚀 Starting A2A Retail Demo Frontend on http://{HOST}:{PORT}")
-    
+
     try:
         wsgi_app = me.create_wsgi_app()
         run_simple(HOST, PORT, wsgi_app, use_reloader=False, use_debugger=True)
     except Exception as e:
         print(f"❌ Failed to start: {e}")
         import traceback
+
         traceback.print_exc()
