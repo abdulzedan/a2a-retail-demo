@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 class MissingAPIKeyError(Exception):
     """Exception for missing API key."""
+
     pass
 
 
@@ -35,13 +36,11 @@ def main(host: str, port: int):
     try:
         # Check for API key
         if not os.getenv("GOOGLE_API_KEY"):
-            raise MissingAPIKeyError(
-                "GOOGLE_API_KEY environment variable not set."
-            )
-        
+            raise MissingAPIKeyError("GOOGLE_API_KEY environment variable not set.")
+
         # Define agent capabilities
         capabilities = AgentCapabilities(streaming=True)
-        
+
         # Define agent skills
         skill = AgentSkill(
             id="inventory_management",
@@ -56,7 +55,7 @@ def main(host: str, port: int):
                 "What items are low in stock?",
             ],
         )
-        
+
         # Create agent card - use localhost for URL to ensure consistent access
         agent_card = AgentCard(
             name="Inventory Management Agent",
@@ -68,24 +67,25 @@ def main(host: str, port: int):
             capabilities=capabilities,
             skills=[skill],
         )
-        
+
         # Create request handler
         request_handler = DefaultRequestHandler(
             agent_executor=InventoryAgentExecutor(),
             task_store=InMemoryTaskStore(),
         )
-        
+
         # Create A2A server
         server = A2AStarletteApplication(
             agent_card=agent_card,
             http_handler=request_handler,
         )
-        
+
         # Start server
         import uvicorn
+
         logger.info(f"Starting Inventory Agent on http://{host}:{port}")
         uvicorn.run(server.build(), host=host, port=port)
-        
+
     except MissingAPIKeyError as e:
         logger.error(f"Error: {e}")
         exit(1)
