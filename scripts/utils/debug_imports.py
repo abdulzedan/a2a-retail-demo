@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-print(f"🔍 Debug Information")
+print("🔍 Debug Information")
 print(f"📁 Working directory: {os.getcwd()}")
 print(f"📁 Script location: {ROOT}")
 print(f"🐍 Python version: {sys.version}")
@@ -22,6 +22,7 @@ print("🧪 Testing imports...")
 
 try:
     import mesop as me
+
     print("✅ mesop imported successfully")
 except ImportError as e:
     print(f"❌ Failed to import mesop: {e}")
@@ -29,12 +30,14 @@ except ImportError as e:
 
 try:
     import structlog
+
     print("✅ structlog imported successfully")
 except ImportError as e:
     print(f"❌ Failed to import structlog: {e}")
 
 try:
     from backend.config import settings
+
     print("✅ backend.config imported successfully")
     print(f"   📊 Settings available: {type(settings)}")
 except ImportError as e:
@@ -43,6 +46,7 @@ except ImportError as e:
 
 try:
     from backend.a2a import A2AClient
+
     print("✅ backend.a2a imported successfully")
 except ImportError as e:
     print(f"❌ Failed to import backend.a2a: {e}")
@@ -50,6 +54,7 @@ except ImportError as e:
 
 try:
     from frontend.components import agent_status
+
     print("✅ frontend.components imported successfully")
 except ImportError as e:
     print(f"❌ Failed to import frontend.components: {e}")
@@ -59,10 +64,11 @@ print()
 print("🧪 Testing Mesop functionality...")
 
 try:
+
     @me.page(path="/debug", title="Debug Page")
     def debug_page():
         me.text("Debug page works!")
-    
+
     print("✅ Mesop page decorator works")
 except Exception as e:
     print(f"❌ Mesop page decorator failed: {e}")
