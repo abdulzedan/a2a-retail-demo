@@ -32,10 +32,10 @@ def main(host: str, port: int):
         # Check for API key
         if not os.getenv("GOOGLE_API_KEY"):
             raise Exception("GOOGLE_API_KEY environment variable not set.")
-        
+
         # Define agent capabilities
         capabilities = AgentCapabilities(streaming=True)
-        
+
         # Define agent skills
         skill = AgentSkill(
             id="retail_coordination",
@@ -50,7 +50,7 @@ def main(host: str, port: int):
                 "What are your store hours?",
             ],
         )
-        
+
         # Create agent card - use localhost for URL to ensure consistent access
         agent_card = AgentCard(
             name="Retail Host Agent",
@@ -62,24 +62,25 @@ def main(host: str, port: int):
             capabilities=capabilities,
             skills=[skill],
         )
-        
+
         # Create request handler
         request_handler = DefaultRequestHandler(
             agent_executor=HostAgentExecutor(),
             task_store=InMemoryTaskStore(),
         )
-        
+
         # Create A2A server
         server = A2AStarletteApplication(
             agent_card=agent_card,
             http_handler=request_handler,
         )
-        
+
         # Start server
         import uvicorn
+
         logger.info(f"Starting Host Agent on http://{host}:{port}")
         uvicorn.run(server.build(), host=host, port=port)
-        
+
     except Exception as e:
         logger.error(f"Server startup error: {e}")
         exit(1)
