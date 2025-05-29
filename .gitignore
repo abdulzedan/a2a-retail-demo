@@ -139,3 +139,4 @@ Thumbs.db
 logs/
 temp/
 data/
+dump_project.py
