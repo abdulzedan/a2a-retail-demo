@@ -1,8 +1,6 @@
 """Configuration settings for the A2A Retail Demo."""
 
-import os
 from pathlib import Path
-from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,7 +16,7 @@ class Settings(BaseSettings):
 
     # Google AI / Gemini Configuration
     google_api_key: str
-    google_cloud_project: Optional[str] = None
+    google_cloud_project: str | None = None
     google_cloud_location: str = "us-central1"
     google_genai_use_vertexai: bool = False
 
