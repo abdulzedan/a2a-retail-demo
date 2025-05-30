@@ -1,5 +1,3 @@
-"""Inventory Agent A2A Server with Vertex AI Search."""
-
 import logging
 import os
 import click

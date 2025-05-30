@@ -1,5 +1,3 @@
-"""Inventory Agent using Google ADK and A2A Protocol with Vertex AI Search."""
-
 import asyncio
 import json
 import logging
