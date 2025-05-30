@@ -6,6 +6,7 @@ pydantic-settings==2.5.2
 # Official A2A SDK and samples
 git+https://github.com/google/a2a-python.git
 google-adk>=1.0.0
+google-cloud-discoveryengine
 
 # Web framework
 fastapi==0.115.12
