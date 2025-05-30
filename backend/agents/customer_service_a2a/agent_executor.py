@@ -1,5 +1,3 @@
-"""Customer Service Agent Executor for A2A Protocol."""
-
 import logging
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext

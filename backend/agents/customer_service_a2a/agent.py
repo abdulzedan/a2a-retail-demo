@@ -1,5 +1,3 @@
-"""Customer Service Agent using LangGraph and A2A Protocol."""
-
 from __future__ import annotations
 
 import logging

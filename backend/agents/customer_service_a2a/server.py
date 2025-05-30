@@ -1,5 +1,3 @@
-"""Customer Service Agent A2A Server."""
-
 import logging
 import os
 import click
