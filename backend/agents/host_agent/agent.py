@@ -1,22 +1,9 @@
+import asyncio
+import json
 import logging
-import uuid
-from typing import Any
-from collections.abc import AsyncIterable
+import os
+from typing import Any, AsyncIterable, Dict, List, Optional
 
-import httpx
-from a2a.client import A2AClient
-from a2a.types import (
-    AgentCard,
-    Message,
-    Part,
-    Role,
-    TextPart,
-    SendMessageRequest,
-    MessageSendParams,
-    MessageSendConfiguration,
-    Task,
-)
-from a2a.utils import get_message_text
 from google.adk.agents import Agent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
@@ -24,21 +11,34 @@ from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
+# Import the VertexSearchStore
+import sys
+from pathlib import Path
+# Add the project root to the path to import from backend.utils
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from backend.utils.vector_search_store import VertexSearchStore
+
 logger = logging.getLogger(__name__)
 
 
-class HostAgent:
-    """Coordinates between Inventory and Customer Service agents."""
-
+class InventoryAgent:
+    """Inventory management agent that handles product availability and stock levels using Vertex AI Search."""
+    
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
-
-    # Agent URLs
-    INVENTORY_AGENT_URL = "http://localhost:8001"
-    CUSTOMER_SERVICE_AGENT_URL = "http://localhost:8002"
-
-    def __init__(self) -> None:
+    
+    def __init__(self):
+        # Initialize Vertex AI Search Store
+        serving_config = os.getenv("VERTEX_SEARCH_SERVING_CONFIG")
+        if not serving_config:
+            raise ValueError(
+                "VERTEX_SEARCH_SERVING_CONFIG environment variable must be set. "
+                "Format: projects/{project}/locations/{location}/collections/{collection}/dataStores/{datastore}/servingConfigs/{config}"
+            )
+        
+        self._search_store = VertexSearchStore(serving_config=serving_config)
         self._agent = self._build_agent()
-        self._user_id = "host_agent_user"
+        self._user_id = "inventory_agent_user"
         self._runner = Runner(
             app_name=self._agent.name,
             agent=self._agent,
@@ -46,148 +46,395 @@ class HostAgent:
             session_service=InMemorySessionService(),
             memory_service=InMemoryMemoryService(),
         )
-        self._agent_cards: dict[str, AgentCard] = {}
-
-    async def _get_agent_card(self, agent_url: str) -> AgentCard | None:
-        """Get and cache agent card."""
-        if agent_url not in self._agent_cards:
-            try:
-                logger.info(f"Fetching agent card from {agent_url}")
-                async with httpx.AsyncClient() as hc:
-                    # Fetch the agent card JSON directly
-                    response = await hc.get(f"{agent_url}/.well-known/agent.json")
-                    response.raise_for_status()
-                    logger.info(f"Direct GET to {agent_url}: {response.status_code}")
-
-                    # Parse the agent card
-                    agent_card = AgentCard(**response.json())
-                    self._agent_cards[agent_url] = agent_card
-                    logger.info(f"Successfully cached agent card for {agent_url}: {agent_card.name}")
-                    return agent_card
-            except Exception as e:
-                logger.error(f"Failed to get agent card from {agent_url}: {e}", exc_info=True)
-                return None
-        return self._agent_cards.get(agent_url)
-
-    async def _call_agent_with_a2a(self, agent_url: str, query: str, context_id: str) -> str:
-        """Call an agent using the A2A protocol."""
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as hc:
-                # Get the A2A client
-                client = await A2AClient.get_client_from_agent_card_url(httpx_client=hc, base_url=agent_url)
-
-                # Create message
-                message = Message(
-                    messageId=str(uuid.uuid4()),
-                    contextId=context_id,
-                    role=Role.user,
-                    parts=[Part(root=TextPart(text=query))],
-                )
-
-                # Create request with configuration AND ID
-                request = SendMessageRequest(
-                    id=str(uuid.uuid4()),  # Add the required id field
-                    params=MessageSendParams(
-                        message=message,
-                        configuration=MessageSendConfiguration(acceptedOutputModes=["text/plain", "text"]),
-                    ),
-                )
-
-                # Send message
-                response = await client.send_message(request)
-
-                # Extract response
-                if hasattr(response, "root"):
-                    result = response.root.result
-                else:
-                    result = response.result if hasattr(response, "result") else response
-
-                # Handle different response types
-                if isinstance(result, Task):
-                    # Task response
-                    if result.artifacts:
-                        # Extract text from artifacts
-                        texts = []
-                        for artifact in result.artifacts:
-                            for part in artifact.parts:
-                                if hasattr(part, "root") and hasattr(part.root, "text"):
-                                    texts.append(part.root.text)
-                        return "\n".join(texts) if texts else "Task completed with no text response"
-                    elif result.status and result.status.message:
-                        return get_message_text(result.status.message)
-                    else:
-                        return f"Task {result.id} status: {result.status.state if result.status else 'unknown'}"
-
-                elif isinstance(result, Message):
-                    # Direct message response
-                    return get_message_text(result)
-
-                else:
-                    logger.warning(f"Unexpected response type: {type(result)}")
-                    return "Received response but unable to extract text"
-
-        except Exception as e:
-            logger.error(f"Error calling agent at {agent_url}: {e}", exc_info=True)
-            return f"Error communicating with agent: {str(e)}"
-
-    async def call_customer_service_agent(self, query: str, context_id: str) -> str:
-        """Forward query to Customer Service Agent over A2A."""
-        return await self._call_agent_with_a2a(self.CUSTOMER_SERVICE_AGENT_URL, query, context_id)
-
-    async def call_inventory_agent(self, query: str, context_id: str) -> str:
-        """Forward query to Inventory Agent over A2A."""
-        return await self._call_agent_with_a2a(self.INVENTORY_AGENT_URL, query, context_id)
-
-    async def get_agent_status(self) -> str:
-        """Return online/offline status for remote agents."""
-        lines = ["Agent Status:"]
-
-        for name, url in [
-            ("Inventory Agent", self.INVENTORY_AGENT_URL),
-            ("Customer Service Agent", self.CUSTOMER_SERVICE_AGENT_URL),
-        ]:
-            card = await self._get_agent_card(url)
-            if card:
-                lines.append(f"✅ {name}: Online - {card.description}")
-            else:
-                lines.append(f"❌ {name}: Offline")
-
-        return "\n".join(lines)
-
+    
     def _build_agent(self) -> Agent:
+        """Build the ADK agent for inventory management."""
+        # Store reference to search store for use in tools
+        search_store = self._search_store
+        
+        def check_product_availability(product_id: str) -> Dict[str, Any]:
+            """Check if a specific product is available in inventory."""
+            try:
+                # Use exact ID matching
+                result = search_store.get_by_id(product_id)
+                
+                if result:
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        return {
+                            "status": "success",
+                            "product_id": result.get("id", product_id),
+                            "name": metadata.get("name", "Unknown"),
+                            "available": metadata.get("stock_quantity", 0) > 0,
+                            "stock_quantity": metadata.get("stock_quantity", 0),
+                            "stock_status": metadata.get("stock_status", "Unknown"),
+                            "price": metadata.get("price", 0),
+                            "description": metadata.get("description", ""),
+                            "category": metadata.get("category", ""),
+                            "brand": metadata.get("brand", ""),
+                            "sku": metadata.get("sku", ""),
+                        }
+                    else:
+                        return {
+                            "status": "success",
+                            "product_id": result.get("id", product_id),
+                            "name": result.get("name", "Unknown"),
+                            "available": result.get("stock_quantity", 0) > 0,
+                            "stock_quantity": result.get("stock_quantity", 0),
+                            "stock_status": result.get("stock_status", "Unknown"),
+                            "price": result.get("price", 0),
+                            "description": result.get("description", ""),
+                            "category": result.get("category", ""),
+                            "brand": result.get("brand", ""),
+                            "sku": result.get("sku", ""),
+                        }
+                
+                return {
+                    "status": "error",
+                    "error_message": f"Product {product_id} not found",
+                }
+                
+            except Exception as e:
+                logger.error(f"Error checking product availability: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Failed to check product: {str(e)}",
+                }
+        def search_products_by_query(query: str) -> Dict[str, Any]:
+            """Search for products by name or description.
+            
+            Args:
+                query: Search term to look for in product names and descriptions
+            """
+            try:
+                # Use Vertex AI Search's hybrid search capabilities
+                results = search_store.search(query=query, top_k=20)
+                
+                products = []
+                for result in results:
+                    # Handle both metadata and flattened data structures
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        products.append({
+                            "id": result.get("id"),
+                            "name": metadata.get("name"),
+                            "description": metadata.get("description"),
+                            "category": metadata.get("category"),
+                            "price": metadata.get("price"),
+                            "stock_quantity": metadata.get("stock_quantity", 0),
+                            "stock_status": metadata.get("stock_status"),
+                            "sku": metadata.get("sku"),
+                            "brand": metadata.get("brand"),
+                            "similarity_score": result.get("similarity_score", 0),
+                        })
+                    else:
+                        # Flattened structure
+                        products.append({
+                            "id": result.get("id"),
+                            "name": result.get("name"),
+                            "description": result.get("description"),
+                            "category": result.get("category"),
+                            "price": result.get("price"),
+                            "stock_quantity": result.get("stock_quantity", 0),
+                            "stock_status": result.get("stock_status"),
+                            "sku": result.get("sku"),
+                            "brand": result.get("brand"),
+                            "similarity_score": result.get("similarity_score", 0),
+                        })
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error searching products: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def search_products_by_category(category: str) -> Dict[str, Any]:
+            """Search for products in a specific category.
+            
+            Args:
+                category: Category name (electronics, clothing, home, sports)
+            """
+            try:
+                # Search with category filter
+                query = f"category:{category.lower()}"
+                results = search_store.search(query=query, top_k=50)
+                
+                products = []
+                for result in results:
+                    # Get product data
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        # Double-check category match
+                        if metadata.get("category", "").lower() == category.lower():
+                            products.append({
+                                "id": result.get("id"),
+                                "name": metadata.get("name"),
+                                "description": metadata.get("description"),
+                                "category": metadata.get("category"),
+                                "price": metadata.get("price"),
+                                "stock_quantity": metadata.get("stock_quantity", 0),
+                                "stock_status": metadata.get("stock_status"),
+                                "sku": metadata.get("sku"),
+                                "brand": metadata.get("brand"),
+                            })
+                    else:
+                        # Flattened structure
+                        if result.get("category", "").lower() == category.lower():
+                            products.append({
+                                "id": result.get("id"),
+                                "name": result.get("name"),
+                                "description": result.get("description"),
+                                "category": result.get("category"),
+                                "price": result.get("price"),
+                                "stock_quantity": result.get("stock_quantity", 0),
+                                "stock_status": result.get("stock_status"),
+                                "sku": result.get("sku"),
+                                "brand": result.get("brand"),
+                            })
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error searching by category: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Category search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def search_products_by_price_range(min_price: float, max_price: float) -> Dict[str, Any]:
+            """Search for products within a price range.
+            
+            Args:
+                min_price: Minimum price
+                max_price: Maximum price
+            """
+            try:
+                # Search for products and filter by price
+                # Vertex AI Search doesn't have native numeric range filters in the query syntax,
+                # so we'll search broadly and filter results
+                query = f"price product"  # Generic query to get products
+                results = search_store.search(query=query, top_k=100)
+                
+                products = []
+                for result in results:
+                    # Get price from appropriate location
+                    if "metadata" in result:
+                        price = result["metadata"].get("price", 0)
+                        if min_price <= price <= max_price:
+                            metadata = result["metadata"]
+                            products.append({
+                                "id": result.get("id"),
+                                "name": metadata.get("name"),
+                                "description": metadata.get("description"),
+                                "category": metadata.get("category"),
+                                "price": price,
+                                "stock_quantity": metadata.get("stock_quantity", 0),
+                                "stock_status": metadata.get("stock_status"),
+                                "sku": metadata.get("sku"),
+                                "brand": metadata.get("brand"),
+                            })
+                    else:
+                        price = result.get("price", 0)
+                        if min_price <= price <= max_price:
+                            products.append({
+                                "id": result.get("id"),
+                                "name": result.get("name"),
+                                "description": result.get("description"),
+                                "category": result.get("category"),
+                                "price": price,
+                                "stock_quantity": result.get("stock_quantity", 0),
+                                "stock_status": result.get("stock_status"),
+                                "sku": result.get("sku"),
+                                "brand": result.get("brand"),
+                            })
+                
+                # Sort by price
+                products.sort(key=lambda x: x["price"])
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error searching by price range: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Price range search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def get_low_stock_items(threshold: int) -> Dict[str, Any]:
+            """Get items that are low in stock.
+            
+            Args:
+                threshold: Stock quantity threshold (items below this are considered low stock)
+            """
+            try:
+                # Search for products with stock information
+                query = "stock_quantity stock inventory"
+                results = search_store.search(query=query, top_k=100)
+                
+                low_stock_items = []
+                for result in results:
+                    # Get stock quantity from appropriate location
+                    if "metadata" in result:
+                        stock_quantity = result["metadata"].get("stock_quantity", 0)
+                        if 0 < stock_quantity < threshold:
+                            metadata = result["metadata"]
+                            low_stock_items.append({
+                                "id": result.get("id"),
+                                "name": metadata.get("name"),
+                                "current_stock": stock_quantity,
+                                "category": metadata.get("category"),
+                                "sku": metadata.get("sku"),
+                            })
+                    else:
+                        stock_quantity = result.get("stock_quantity", 0)
+                        if 0 < stock_quantity < threshold:
+                            low_stock_items.append({
+                                "id": result.get("id"),
+                                "name": result.get("name"),
+                                "current_stock": stock_quantity,
+                                "category": result.get("category"),
+                                "sku": result.get("sku"),
+                            })
+                
+                # Sort by stock quantity (lowest first)
+                low_stock_items.sort(key=lambda x: x["current_stock"])
+                
+                return {
+                    "status": "success",
+                    "threshold": threshold,
+                    "count": len(low_stock_items),
+                    "products": low_stock_items,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error getting low stock items: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Low stock search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def get_all_products() -> Dict[str, Any]:
+            """Get all products in inventory."""
+            try:
+                # Use a broad query to get all products
+                query = "*"  # Or use a generic term like "product"
+                results = search_store.search(query=query, top_k=100)
+                
+                products = []
+                for result in results:
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        products.append({
+                            "id": result.get("id"),
+                            "name": metadata.get("name"),
+                            "description": metadata.get("description"),
+                            "category": metadata.get("category"),
+                            "price": metadata.get("price"),
+                            "stock_quantity": metadata.get("stock_quantity", 0),
+                            "stock_status": metadata.get("stock_status"),
+                            "sku": metadata.get("sku"),
+                            "brand": metadata.get("brand"),
+                        })
+                    else:
+                        products.append({
+                            "id": result.get("id"),
+                            "name": result.get("name"),
+                            "description": result.get("description"),
+                            "category": result.get("category"),
+                            "price": result.get("price"),
+                            "stock_quantity": result.get("stock_quantity", 0),
+                            "stock_status": result.get("stock_status"),
+                            "sku": result.get("sku"),
+                            "brand": result.get("brand"),
+                        })
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error getting all products: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Failed to retrieve products: {str(e)}",
+                    "products": [],
+                }
+        
         return Agent(
-            name="host_agent",
+            name="inventory_agent",
             model="gemini-2.0-flash",
-            description="Host agent orchestrating retail queries between specialized agents.",
-            instruction=(
-                """You are a host agent that coordinates between specialized retail agents.
+            description="Retail inventory management agent that handles product availability, stock levels, and product searches using Vertex AI Search.",
+            instruction="""You are an inventory management assistant for a retail organization. Your role is to help with product-related queries ONLY.
 
-Your role is to analyze incoming queries and determine which agent should handle them.
+IMPORTANT: If a user's query contains both inventory questions AND non-inventory topics (like orders, returns, or customer service), ONLY respond to the inventory-related parts. Do not acknowledge or mention that you cannot handle the other parts.
 
-Routing rules:
-- **Customer Service Agent**: Handle queries about order status, returns, store hours, customer complaints, general inquiries
-- **Inventory Agent**: Handle queries about product availability, stock levels, product search, pricing
+Your responsibilities:
+1. Check product availability and stock levels
+2. Search for products based on various criteria (name, category, price range)
+3. Monitor low stock items
+4. Provide accurate inventory information
 
-When you receive a query, respond with ONLY one of these two responses:
-1. "ROUTE_TO_INVENTORY" - if the query is about products, stock, availability, or pricing
-2. "ROUTE_TO_CUSTOMER_SERVICE" - if the query is about orders, returns, store information, or general help
+You have access to a Vertex AI Search datastore that contains the product inventory.
 
-Do not provide any other information or explanation. Just respond with the routing decision."""
-            ),
-            tools=[],  # No tools - we'll handle routing in code
+Always provide clear, accurate information about product availability and stock status. 
+When products are out of stock, mention alternative products if available.
+Format your responses in a helpful and organized manner.
+
+SEARCH GUIDELINES:
+- When a user asks about a product, use search_products_by_query first with the product name
+- Our categories are: "electronics", "clothing", "home", "sports"
+- If you need to search by category, use search_products_by_category
+- If you need to search by price range, use search_products_by_price_range
+- Use check_product_availability only when you have a specific product ID or SKU
+
+When responding with product information, format it clearly with details like:
+- Product name and ID
+- Price
+- Stock status and quantity
+- Brand and category
+
+If a search returns no results, try different search approaches before saying the item is not available.""",
+            tools=[
+                check_product_availability,
+                search_products_by_query,
+                search_products_by_category,
+                search_products_by_price_range,
+                get_low_stock_items,
+                get_all_products,
+            ],
         )
-
-    async def stream(self, query: str, session_id: str) -> AsyncIterable[dict[str, Any]]:
-        """Stream responses for the given query."""
+    
+    async def stream(self, query: str, session_id: str) -> AsyncIterable[Dict[str, Any]]:
+        """Stream responses from the inventory agent."""
         try:
-            logger.info(f"Host agent received query: {query}")
-
             # Get or create session
             session = await self._runner.session_service.get_session(
                 app_name=self._agent.name,
                 user_id=self._user_id,
                 session_id=session_id,
             )
+            
             if session is None:
                 session = await self._runner.session_service.create_session(
                     app_name=self._agent.name,
@@ -195,76 +442,81 @@ Do not provide any other information or explanation. Just respond with the routi
                     state={},
                     session_id=session_id,
                 )
-
-            # Use session_id as context_id for consistency
-            context_id = session_id
-
-            # Check agent status first
-            inventory_card = await self._get_agent_card(self.INVENTORY_AGENT_URL)
-            customer_service_card = await self._get_agent_card(self.CUSTOMER_SERVICE_AGENT_URL)
-
-            # Yield initial status
-            yield {"type": "status", "message": "Analyzing your request..."}
-
+            
             # Create user message
-            content = types.Content(role="user", parts=[types.Part.from_text(text=query)])
-
-            # Run the agent to determine routing
-            routing_decision = None
+            content = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=query)]
+            )
+            
+            # Yield initial status
+            yield {
+                "type": "status",
+                "message": "Searching inventory database..."
+            }
+            
+            # Run agent
+            tool_called = False
+            final_response = None
+            
             async for event in self._runner.run_async(
                 user_id=self._user_id,
                 session_id=session.id,
-                new_message=content,
+                new_message=content
             ):
-                if event.is_final_response() and event.content and event.content.parts:
-                    routing_decision = "\n".join(p.text for p in event.content.parts if p.text)
-                    break
-
-            if not routing_decision:
-                yield {"type": "error", "message": "Unable to determine routing"}
-                return
-
-            # Check the routing decision
-            if "ROUTE_TO_INVENTORY" in routing_decision:
-                if not inventory_card:
-                    yield {"type": "error", "message": "Inventory agent is currently offline. Please try again later."}
-                    return
-
-                yield {"type": "routing", "agent": "inventory", "message": "Checking our inventory system..."}
-
-                response = await self.call_inventory_agent(query, context_id)
-
-                yield {"type": "agent_response", "agent": "inventory"}
-
-                yield {"type": "result", "content": response}
-
-            elif "ROUTE_TO_CUSTOMER_SERVICE" in routing_decision:
-                if not customer_service_card:
+                # Check for tool calls
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.function_call:
+                            tool_called = True
+                            yield {
+                                "type": "tool_call",
+                                "tool_name": part.function_call.name,
+                                "message": f"Searching Vertex AI: {part.function_call.name.replace('_', ' ')}..."
+                            }
+                
+                # Check for final response
+                if event.is_final_response():
+                    final_response = event
+            
+            # Process final response
+            if final_response and final_response.content:
+                response_text = ""
+                response_data = None
+                
+                if final_response.content.parts:
+                    # Extract text parts
+                    text_parts = []
+                    for part in final_response.content.parts:
+                        if part.text:
+                            text_parts.append(part.text)
+                        elif part.function_response:
+                            # Handle function response
+                            response_data = part.function_response.response
+                    
+                    if text_parts:
+                        response_text = "\n".join(text_parts)
+                
+                # Yield final result
+                if response_data:
                     yield {
-                        "type": "error",
-                        "message": "Customer service agent is currently offline. Please try again later.",
+                        "type": "result",
+                        "content": response_data
                     }
-                    return
-
-                yield {
-                    "type": "routing",
-                    "agent": "customer service",
-                    "message": "Connecting you with customer service...",
-                }
-
-                response = await self.call_customer_service_agent(query, context_id)
-
-                yield {"type": "agent_response", "agent": "customer service"}
-
-                yield {"type": "result", "content": response}
-
+                else:
+                    yield {
+                        "type": "result",
+                        "content": response_text or "No response generated"
+                    }
             else:
-                # Could not determine routing
                 yield {
                     "type": "error",
-                    "message": "I couldn't determine which agent should handle your request. Please try rephrasing your question.",
+                    "message": "No response from inventory agent"
                 }
-
-        except Exception as exc:
-            logger.error(f"Error in host agent stream: {exc}", exc_info=True)
-            yield {"type": "error", "message": f"Error coordinating request: {str(exc)}"}
+        
+        except Exception as e:
+            logger.error(f"Error in inventory agent stream: {e}", exc_info=True)
+            yield {
+                "type": "error",
+                "message": f"Error processing inventory request: {str(e)}"
+            }
