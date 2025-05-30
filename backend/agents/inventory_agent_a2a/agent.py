@@ -1,10 +1,10 @@
-"""Inventory Agent using Google ADK and A2A Protocol."""
+"""Inventory Agent using Google ADK and A2A Protocol with Vertex AI Search."""
 
 import asyncio
 import json
 import logging
 import os
-from typing import Any, AsyncIterable, Dict, List
+from typing import Any, AsyncIterable, Dict, List, Optional
 
 from google.adk.agents import Agent
 from google.adk.artifacts import InMemoryArtifactService
@@ -13,198 +13,32 @@ from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.genai import types
 
+# Import the VertexSearchStore
+import sys
+from pathlib import Path
+# Add the project root to the path to import from backend.utils
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from backend.utils.vector_search_store import VertexSearchStore
+
 logger = logging.getLogger(__name__)
-
-# Sample inventory data
-INVENTORY_DATA = [
-    {
-        "id": "prod_001",
-        "name": "Smart TV 55-inch 4K",
-        "description": "Ultra HD smart LED TV with built-in streaming apps",
-        "category": "electronics",
-        "price": 699.99,
-        "stock_quantity": 25,
-        "stock_status": "In Stock",
-        "sku": "TV55-4K-001",
-        "brand": "TechVision",
-    },
-    {
-        "id": "prod_002", 
-        "name": "Wireless Earbuds Pro",
-        "description": "Noise cancelling wireless earbuds with 24h battery",
-        "category": "electronics",
-        "price": 199.99,
-        "stock_quantity": 150,
-        "stock_status": "In Stock",
-        "sku": "WE-PRO-002",
-        "brand": "AudioMax",
-    },
-    {
-        "id": "prod_003",
-        "name": "Cotton T-Shirt",
-        "description": "100% organic cotton T-shirt, multiple colors",
-        "category": "clothing",
-        "price": 29.99,
-        "stock_quantity": 8,
-        "stock_status": "Low Stock",
-        "sku": "TS-COT-003",
-        "brand": "EcoWear",
-    },
-    {
-        "id": "prod_004",
-        "name": "Coffee Maker Deluxe",
-        "description": "12-cup programmable coffee maker with thermal carafe",
-        "category": "home",
-        "price": 89.99,
-        "stock_quantity": 0,
-        "stock_status": "Out of Stock",
-        "sku": "CM-DLX-004",
-        "brand": "BrewMaster",
-    },
-    {
-        "id": "prod_005",
-        "name": "Yoga Mat Premium",
-        "description": "Extra thick non-slip yoga mat with carrying strap",
-        "category": "sports",
-        "price": 49.99,
-        "stock_quantity": 45,
-        "stock_status": "In Stock",
-        "sku": "YM-PRM-005",
-        "brand": "FitLife",
-    },
-]
-
-
-def check_product_availability(product_id: str) -> Dict[str, Any]:
-    """Check if a specific product is available in inventory.
-    
-    Args:
-        product_id: The product ID or SKU to check
-    """
-    for product in INVENTORY_DATA:
-        if product["id"] == product_id or product["sku"].lower() == product_id.lower():
-            return {
-                "status": "success",
-                "product_id": product["id"],
-                "name": product["name"],
-                "available": product["stock_quantity"] > 0,
-                "stock_quantity": product["stock_quantity"],
-                "stock_status": product["stock_status"],
-                "price": product["price"],
-            }
-    
-    return {
-        "status": "error",
-        "error_message": f"Product {product_id} not found",
-    }
-
-
-def search_products_by_query(query: str) -> Dict[str, Any]:
-    """Search for products by name or description.
-    
-    Args:
-        query: Search term to look for in product names and descriptions
-    """
-    results = []
-    query_lower = query.lower()
-    
-    for product in INVENTORY_DATA:
-        if any([
-            query_lower in product["name"].lower(),
-            query_lower in product["description"].lower(),  
-            query_lower in product["brand"].lower() if product["brand"] else False,
-            query_lower in product["category"].lower(),
-        ]):
-            results.append(product)
-    
-    return {
-        "status": "success",
-        "total_count": len(results),
-        "products": results,
-    }
-
-
-def search_products_by_category(category: str) -> Dict[str, Any]:
-    """Search for products in a specific category.
-    
-    Args:
-        category: Category name (electronics, clothing, home, sports)
-    """
-    results = []
-    category_lower = category.lower()
-    
-    for product in INVENTORY_DATA:
-        if product["category"].lower() == category_lower:
-            results.append(product)
-    
-    return {
-        "status": "success",
-        "total_count": len(results),
-        "products": results,
-    }
-
-
-def search_products_by_price_range(min_price: float, max_price: float) -> Dict[str, Any]:
-    """Search for products within a price range.
-    
-    Args:
-        min_price: Minimum price
-        max_price: Maximum price
-    """
-    results = []
-    
-    for product in INVENTORY_DATA:
-        if min_price <= product["price"] <= max_price:
-            results.append(product)
-    
-    return {
-        "status": "success",
-        "total_count": len(results),
-        "products": results,
-    }
-
-
-def get_low_stock_items(threshold: int) -> Dict[str, Any]:
-    """Get items that are low in stock.
-    
-    Args:
-        threshold: Stock quantity threshold (items below this are considered low stock)
-    """
-    low_stock_items = [
-        {
-            "id": product["id"],
-            "name": product["name"],
-            "current_stock": product["stock_quantity"],
-            "category": product["category"],
-            "sku": product["sku"],
-        }
-        for product in INVENTORY_DATA
-        if 0 < product["stock_quantity"] < threshold
-    ]
-    
-    return {
-        "status": "success",
-        "threshold": threshold,
-        "count": len(low_stock_items),
-        "products": low_stock_items,
-    }
-
-
-def get_all_products() -> Dict[str, Any]:
-    """Get all products in inventory."""
-    return {
-        "status": "success",
-        "total_count": len(INVENTORY_DATA),
-        "products": INVENTORY_DATA,
-    }
 
 
 class InventoryAgent:
-    """Inventory management agent that handles product availability and stock levels."""
+    """Inventory management agent that handles product availability and stock levels using Vertex AI Search."""
     
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
     
     def __init__(self):
+        # Initialize Vertex AI Search Store
+        serving_config = os.getenv("VERTEX_SEARCH_SERVING_CONFIG")
+        if not serving_config:
+            raise ValueError(
+                "VERTEX_SEARCH_SERVING_CONFIG environment variable must be set. "
+                "Format: projects/{project}/locations/{location}/collections/{collection}/dataStores/{datastore}/servingConfigs/{config}"
+            )
+        
+        self._search_store = VertexSearchStore(serving_config=serving_config)
         self._agent = self._build_agent()
         self._user_id = "inventory_agent_user"
         self._runner = Runner(
@@ -217,16 +51,350 @@ class InventoryAgent:
     
     def _build_agent(self) -> Agent:
         """Build the ADK agent for inventory management."""
+        # Store reference to search store for use in tools
+        search_store = self._search_store
+        
+        def check_product_availability(product_id: str) -> Dict[str, Any]:
+            """Check if a specific product is available in inventory."""
+            try:
+                # Use exact ID matching
+                result = search_store.get_by_id(product_id)
+                
+                if result:
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        return {
+                            "status": "success",
+                            "product_id": result.get("id", product_id),
+                            "name": metadata.get("name", "Unknown"),
+                            "available": metadata.get("stock_quantity", 0) > 0,
+                            "stock_quantity": metadata.get("stock_quantity", 0),
+                            "stock_status": metadata.get("stock_status", "Unknown"),
+                            "price": metadata.get("price", 0),
+                            "description": metadata.get("description", ""),
+                            "category": metadata.get("category", ""),
+                            "brand": metadata.get("brand", ""),
+                            "sku": metadata.get("sku", ""),
+                        }
+                    else:
+                        return {
+                            "status": "success",
+                            "product_id": result.get("id", product_id),
+                            "name": result.get("name", "Unknown"),
+                            "available": result.get("stock_quantity", 0) > 0,
+                            "stock_quantity": result.get("stock_quantity", 0),
+                            "stock_status": result.get("stock_status", "Unknown"),
+                            "price": result.get("price", 0),
+                            "description": result.get("description", ""),
+                            "category": result.get("category", ""),
+                            "brand": result.get("brand", ""),
+                            "sku": result.get("sku", ""),
+                        }
+                
+                return {
+                    "status": "error",
+                    "error_message": f"Product {product_id} not found",
+                }
+                
+            except Exception as e:
+                logger.error(f"Error checking product availability: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Failed to check product: {str(e)}",
+                }
+        def search_products_by_query(query: str) -> Dict[str, Any]:
+            """Search for products by name or description.
+            
+            Args:
+                query: Search term to look for in product names and descriptions
+            """
+            try:
+                # Use Vertex AI Search's hybrid search capabilities
+                results = search_store.search(query=query, top_k=20)
+                
+                products = []
+                for result in results:
+                    # Handle both metadata and flattened data structures
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        products.append({
+                            "id": result.get("id"),
+                            "name": metadata.get("name"),
+                            "description": metadata.get("description"),
+                            "category": metadata.get("category"),
+                            "price": metadata.get("price"),
+                            "stock_quantity": metadata.get("stock_quantity", 0),
+                            "stock_status": metadata.get("stock_status"),
+                            "sku": metadata.get("sku"),
+                            "brand": metadata.get("brand"),
+                            "similarity_score": result.get("similarity_score", 0),
+                        })
+                    else:
+                        # Flattened structure
+                        products.append({
+                            "id": result.get("id"),
+                            "name": result.get("name"),
+                            "description": result.get("description"),
+                            "category": result.get("category"),
+                            "price": result.get("price"),
+                            "stock_quantity": result.get("stock_quantity", 0),
+                            "stock_status": result.get("stock_status"),
+                            "sku": result.get("sku"),
+                            "brand": result.get("brand"),
+                            "similarity_score": result.get("similarity_score", 0),
+                        })
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error searching products: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def search_products_by_category(category: str) -> Dict[str, Any]:
+            """Search for products in a specific category.
+            
+            Args:
+                category: Category name (electronics, clothing, home, sports)
+            """
+            try:
+                # Search with category filter
+                query = f"category:{category.lower()}"
+                results = search_store.search(query=query, top_k=50)
+                
+                products = []
+                for result in results:
+                    # Get product data
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        # Double-check category match
+                        if metadata.get("category", "").lower() == category.lower():
+                            products.append({
+                                "id": result.get("id"),
+                                "name": metadata.get("name"),
+                                "description": metadata.get("description"),
+                                "category": metadata.get("category"),
+                                "price": metadata.get("price"),
+                                "stock_quantity": metadata.get("stock_quantity", 0),
+                                "stock_status": metadata.get("stock_status"),
+                                "sku": metadata.get("sku"),
+                                "brand": metadata.get("brand"),
+                            })
+                    else:
+                        # Flattened structure
+                        if result.get("category", "").lower() == category.lower():
+                            products.append({
+                                "id": result.get("id"),
+                                "name": result.get("name"),
+                                "description": result.get("description"),
+                                "category": result.get("category"),
+                                "price": result.get("price"),
+                                "stock_quantity": result.get("stock_quantity", 0),
+                                "stock_status": result.get("stock_status"),
+                                "sku": result.get("sku"),
+                                "brand": result.get("brand"),
+                            })
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error searching by category: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Category search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def search_products_by_price_range(min_price: float, max_price: float) -> Dict[str, Any]:
+            """Search for products within a price range.
+            
+            Args:
+                min_price: Minimum price
+                max_price: Maximum price
+            """
+            try:
+                # Search for products and filter by price
+                # Vertex AI Search doesn't have native numeric range filters in the query syntax,
+                # so we'll search broadly and filter results
+                query = f"price product"  # Generic query to get products
+                results = search_store.search(query=query, top_k=100)
+                
+                products = []
+                for result in results:
+                    # Get price from appropriate location
+                    if "metadata" in result:
+                        price = result["metadata"].get("price", 0)
+                        if min_price <= price <= max_price:
+                            metadata = result["metadata"]
+                            products.append({
+                                "id": result.get("id"),
+                                "name": metadata.get("name"),
+                                "description": metadata.get("description"),
+                                "category": metadata.get("category"),
+                                "price": price,
+                                "stock_quantity": metadata.get("stock_quantity", 0),
+                                "stock_status": metadata.get("stock_status"),
+                                "sku": metadata.get("sku"),
+                                "brand": metadata.get("brand"),
+                            })
+                    else:
+                        price = result.get("price", 0)
+                        if min_price <= price <= max_price:
+                            products.append({
+                                "id": result.get("id"),
+                                "name": result.get("name"),
+                                "description": result.get("description"),
+                                "category": result.get("category"),
+                                "price": price,
+                                "stock_quantity": result.get("stock_quantity", 0),
+                                "stock_status": result.get("stock_status"),
+                                "sku": result.get("sku"),
+                                "brand": result.get("brand"),
+                            })
+                
+                # Sort by price
+                products.sort(key=lambda x: x["price"])
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error searching by price range: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Price range search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def get_low_stock_items(threshold: int) -> Dict[str, Any]:
+            """Get items that are low in stock.
+            
+            Args:
+                threshold: Stock quantity threshold (items below this are considered low stock)
+            """
+            try:
+                # Search for products with stock information
+                query = "stock_quantity stock inventory"
+                results = search_store.search(query=query, top_k=100)
+                
+                low_stock_items = []
+                for result in results:
+                    # Get stock quantity from appropriate location
+                    if "metadata" in result:
+                        stock_quantity = result["metadata"].get("stock_quantity", 0)
+                        if 0 < stock_quantity < threshold:
+                            metadata = result["metadata"]
+                            low_stock_items.append({
+                                "id": result.get("id"),
+                                "name": metadata.get("name"),
+                                "current_stock": stock_quantity,
+                                "category": metadata.get("category"),
+                                "sku": metadata.get("sku"),
+                            })
+                    else:
+                        stock_quantity = result.get("stock_quantity", 0)
+                        if 0 < stock_quantity < threshold:
+                            low_stock_items.append({
+                                "id": result.get("id"),
+                                "name": result.get("name"),
+                                "current_stock": stock_quantity,
+                                "category": result.get("category"),
+                                "sku": result.get("sku"),
+                            })
+                
+                # Sort by stock quantity (lowest first)
+                low_stock_items.sort(key=lambda x: x["current_stock"])
+                
+                return {
+                    "status": "success",
+                    "threshold": threshold,
+                    "count": len(low_stock_items),
+                    "products": low_stock_items,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error getting low stock items: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Low stock search failed: {str(e)}",
+                    "products": [],
+                }
+
+        def get_all_products() -> Dict[str, Any]:
+            """Get all products in inventory."""
+            try:
+                # Use a broad query to get all products
+                query = "*"  # Or use a generic term like "product"
+                results = search_store.search(query=query, top_k=100)
+                
+                products = []
+                for result in results:
+                    if "metadata" in result:
+                        metadata = result["metadata"]
+                        products.append({
+                            "id": result.get("id"),
+                            "name": metadata.get("name"),
+                            "description": metadata.get("description"),
+                            "category": metadata.get("category"),
+                            "price": metadata.get("price"),
+                            "stock_quantity": metadata.get("stock_quantity", 0),
+                            "stock_status": metadata.get("stock_status"),
+                            "sku": metadata.get("sku"),
+                            "brand": metadata.get("brand"),
+                        })
+                    else:
+                        products.append({
+                            "id": result.get("id"),
+                            "name": result.get("name"),
+                            "description": result.get("description"),
+                            "category": result.get("category"),
+                            "price": result.get("price"),
+                            "stock_quantity": result.get("stock_quantity", 0),
+                            "stock_status": result.get("stock_status"),
+                            "sku": result.get("sku"),
+                            "brand": result.get("brand"),
+                        })
+                
+                return {
+                    "status": "success",
+                    "total_count": len(products),
+                    "products": products,
+                }
+                
+            except Exception as e:
+                logger.error(f"Error getting all products: {e}")
+                return {
+                    "status": "error",
+                    "error_message": f"Failed to retrieve products: {str(e)}",
+                    "products": [],
+                }
+        
         return Agent(
             name="inventory_agent",
             model="gemini-2.0-flash",
-            description="Retail inventory management agent that handles product availability, stock levels, and product searches.",
+            description="Retail inventory management agent that handles product availability, stock levels, and product searches using Vertex AI Search.",
             instruction="""You are an inventory management assistant for a retail organization. Your role is to:
 
 1. Check product availability and stock levels
 2. Search for products based on various criteria (name, category, price range)
 3. Monitor low stock items
 4. Provide accurate inventory information
+
+You have access to a Vertex AI Search datastore that contains the product inventory.
 
 Always provide clear, accurate information about product availability and stock status. 
 When products are out of stock, mention alternative products if available.
@@ -240,7 +408,7 @@ IMPORTANT SEARCH GUIDELINES:
 - Use check_product_availability only when you have a specific product ID or SKU
 
 Use the available tools:
-- search_products_by_query: Search for products by name or description
+- search_products_by_query: Search for products by name or description (uses Vertex AI Search)
 - search_products_by_category: Get all products in a specific category
 - search_products_by_price_range: Find products within a price range
 - check_product_availability: Check if a specific product ID is in stock
@@ -291,7 +459,7 @@ If a search returns no results, try different search approaches before saying th
             # Yield initial status
             yield {
                 "type": "status",
-                "message": "Processing inventory request..."
+                "message": "Searching inventory database..."
             }
             
             # Run agent
@@ -311,7 +479,7 @@ If a search returns no results, try different search approaches before saying th
                             yield {
                                 "type": "tool_call",
                                 "tool_name": part.function_call.name,
-                                "message": f"Checking {part.function_call.name.replace('_', ' ')}..."
+                                "message": f"Searching Vertex AI: {part.function_call.name.replace('_', ' ')}..."
                             }
                 
                 # Check for final response
