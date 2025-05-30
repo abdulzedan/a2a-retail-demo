@@ -1,5 +1,3 @@
-"""Host Agent that orchestrates between Customer Service and Inventory agents."""
-
 import logging
 import uuid
 from typing import Any

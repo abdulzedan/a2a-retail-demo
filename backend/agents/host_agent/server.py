@@ -1,5 +1,3 @@
-"""Host Agent A2A Server - Using Official A2A SDK."""
-
 import logging
 import os
 import click
