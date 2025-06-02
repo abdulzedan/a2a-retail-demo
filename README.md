@@ -146,11 +146,11 @@ This starts all agents and the frontend automatically.
 make start-host           # Host agent on port 8000
 make start-inventory      # Inventory agent on port 8001  
 make start-customer-service  # Customer service agent on port 8002
-make start-frontend       # Frontend on port 5000
+make start-frontend       # Frontend on port 8080
 ```
 
 ### Access the Application
-Open your browser to: `http://localhost:5000`
+Open your browser to: `http://localhost:8080`
 
 ## 🧪 Testing
 

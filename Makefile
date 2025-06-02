@@ -25,7 +25,7 @@ help:
 	@echo "start-host - Start only the host agent (port 8000)"
 	@echo "start-inventory - Start only inventory agent (port 8001)"
 	@echo "start-customer-service - Start only customer service agent (port 8002)"
-	@echo "start-frontend - Start only the frontend (port 5000)"
+	@echo "start-frontend - Start only the frontend (port 8080)"
 	@echo "quickstart - Quick setup check and start all services"
 	@echo ""
 	@echo "help      - Show this help message"
@@ -145,8 +145,8 @@ start-customer-service:
 
 # Start frontend only
 start-frontend:
-	@echo "🖥️  Starting Frontend on port 5000..."
-	MESOP_HOST=127.0.0.1 MESOP_PORT=5000 .venv/bin/python frontend/app.py
+	@echo "🖥️  Starting Frontend on port 8080..."
+	MESOP_HOST=127.0.0.1 MESOP_PORT=8080 .venv/bin/python frontend/app.py
 
 # Quick start - minimal setup check and run
 quickstart: check start
