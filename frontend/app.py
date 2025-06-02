@@ -39,6 +39,7 @@ class AppState:
     host_agent_online: bool = False
     inventory_agent_online: bool = False
     customer_service_agent_online: bool = False
+    _status_checked: bool = False
     
     # Configuration
     host_agent_url: str = "http://localhost:8000"
@@ -49,7 +50,7 @@ class AppState:
     
     # Theme and UI
     dark_mode: bool = False
-    show_agent_thoughts: bool = True
+    show_agent_thoughts: bool = True  # Show routing decisions for A2A demo
     
     # Streaming state
     current_stream_message: str = ""
@@ -59,7 +60,7 @@ class AppState:
     last_activity: str = "Ready"
     last_response_time: float = 0.0
     current_streaming_response: str = ""
-    streaming_speed: float = 0.08  # Seconds between words (adjustable)
+    streaming_speed: float = 0.03  # Seconds between words (faster for better UX)
     
     # Logging and analytics
     show_logs: bool = False
@@ -191,12 +192,18 @@ async def send_message_to_host_async(message_text: str, context_id: str) -> str:
         return f"Error communicating with host agent: {str(e)}"
 
 def on_input_change(e: me.InputEvent):
-    """Handle input field changes."""
-    me.state(AppState).current_input = e.value
+    """Handle input field changes with debouncing."""
+    state = me.state(AppState)
+    state.current_input = e.value
 
 def add_log_entry(log_type: str, message: str, metadata: dict = None):
-    """Add a new log entry."""
+    """Add a new log entry with optimized performance."""
     state = me.state(AppState)
+    
+    # Only add logs if logging is enabled
+    if not state.show_logs:
+        return
+        
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "type": log_type,
@@ -205,9 +212,9 @@ def add_log_entry(log_type: str, message: str, metadata: dict = None):
     }
     state.current_logs.append(log_entry)
     
-    # Keep only last 50 log entries to prevent memory issues
-    if len(state.current_logs) > 50:
-        state.current_logs = state.current_logs[-50:]
+    # Keep only last 25 log entries for better performance
+    if len(state.current_logs) > 25:
+        state.current_logs = state.current_logs[-25:]
 
 def update_session_stats(response_time: float = None, tokens_used: int = None, 
                         functions_used: List[str] = None, agent_used: str = None):
@@ -419,6 +426,8 @@ async def on_send_message(e: me.ClickEvent):
 
 def on_refresh_status(e: me.ClickEvent):
     """Handle refresh status button click."""
+    state = me.state(AppState)
+    state._status_checked = False  # Reset flag to allow re-checking
     check_agent_status()
 
 def on_clear_chat(e: me.ClickEvent):
@@ -605,9 +614,11 @@ def main_page():
     state = me.state(AppState)
     colors = get_theme_colors(state.dark_mode)
     
-    # Check agent status on page load
-    if not any([state.host_agent_online, state.inventory_agent_online, state.customer_service_agent_online]):
-        check_agent_status()
+    # Check agent status only once per session (not on every render)
+    if not hasattr(state, '_status_checked') or not state._status_checked:
+        if not any([state.host_agent_online, state.inventory_agent_online, state.customer_service_agent_online]):
+            check_agent_status()
+            state._status_checked = True
     
     # Main container with theme-aware styling
     with me.box(
@@ -827,7 +838,7 @@ def main_page():
                         ):
                             if state.current_logs:
                                 # Show logs in reverse chronological order
-                                for log_entry in reversed(state.current_logs[-20:]):  # Last 20 logs
+                                for log_entry in reversed(state.current_logs[-10:]):  # Last 10 logs for better performance
                                     log_icons = {
                                         "user_message": "👤",
                                         "analysis": "🔍",
