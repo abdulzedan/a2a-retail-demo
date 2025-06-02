@@ -25,7 +25,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -r ../requirements.txt
+          pip install -r ../requirements-dev.txt
       
       - name: Lint with Ruff (matching pre-commit)
         run: |
@@ -36,4 +37,7 @@ jobs:
         run: black --check --verbose --config ../pyproject.toml .
       
       - name: Run unit tests
-        run: pytest
+        env:
+          VERTEX_SEARCH_SERVING_CONFIG: "projects/test/locations/test/collections/test/dataStores/test/servingConfigs/test"
+          GOOGLE_API_KEY: "test-key-not-used"
+        run: pytest tests/ -v
