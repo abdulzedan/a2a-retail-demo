@@ -3,4 +3,6 @@ black
 pre-commit
 pytest
 pytest-cov
+pytest-asyncio
+pytest-mock
 python-dotenv
