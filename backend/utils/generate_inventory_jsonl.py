@@ -41,16 +41,20 @@ import random
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import vertexai
 from vertexai.preview.language_models import TextEmbeddingModel
+
 # vertexai <= 0.0.17 didn’t ship preview.exceptions, so fall back gracefully
 try:
     from vertexai.preview.exceptions import VertexAIError
 except ImportError:  # older SDK
+
     class VertexAIError(Exception):
         """Placeholder – upgrade vertexai for richer error details."""
+
+
 from google.api_core.exceptions import NotFound
 
 # ---------------------------------------------------------------------------
@@ -58,39 +62,94 @@ from google.api_core.exceptions import NotFound
 # ---------------------------------------------------------------------------
 categories = {
     "electronics": [
-        "Smartphone", "Tablet", "Laptop", "Smart TV", "Wireless Earbuds",
-        "Bluetooth Speaker", "Gaming Console", "Smartwatch", "Drone", "Camera",
+        "Smartphone",
+        "Tablet",
+        "Laptop",
+        "Smart TV",
+        "Wireless Earbuds",
+        "Bluetooth Speaker",
+        "Gaming Console",
+        "Smartwatch",
+        "Drone",
+        "Camera",
     ],
     "clothing": [
-        "T‑Shirt", "Jeans", "Hoodie", "Jacket", "Sneakers", "Dress", "Sweater",
-        "Shorts", "Socks", "Hat",
+        "T‑Shirt",
+        "Jeans",
+        "Hoodie",
+        "Jacket",
+        "Sneakers",
+        "Dress",
+        "Sweater",
+        "Shorts",
+        "Socks",
+        "Hat",
     ],
     "home": [
-        "Coffee Maker", "Blender", "Vacuum Cleaner", "Air Purifier", "Toaster",
-        "Microwave", "Lamp", "Desk Chair", "Curtains", "Rug",
+        "Coffee Maker",
+        "Blender",
+        "Vacuum Cleaner",
+        "Air Purifier",
+        "Toaster",
+        "Microwave",
+        "Lamp",
+        "Desk Chair",
+        "Curtains",
+        "Rug",
     ],
     "sports": [
-        "Yoga Mat", "Dumbbells", "Tennis Racket", "Football", "Basketball",
-        "Running Shoes", "Cycling Helmet", "Swim Goggles", "Fitness Tracker",
+        "Yoga Mat",
+        "Dumbbells",
+        "Tennis Racket",
+        "Football",
+        "Basketball",
+        "Running Shoes",
+        "Cycling Helmet",
+        "Swim Goggles",
+        "Fitness Tracker",
         "Jump Rope",
     ],
 }
 
 brands = [
-    "TechVision", "AudioMax", "EcoWear", "BrewMaster", "FitLife", "UrbanTrend",
-    "HomeEase", "SportPro", "NextGen", "Zenith",
+    "TechVision",
+    "AudioMax",
+    "EcoWear",
+    "BrewMaster",
+    "FitLife",
+    "UrbanTrend",
+    "HomeEase",
+    "SportPro",
+    "NextGen",
+    "Zenith",
 ]
 adjectives = [
-    "Premium", "Deluxe", "Pro", "Lite", "Ultra", "Plus", "Max", "Eco", "Smart",
+    "Premium",
+    "Deluxe",
+    "Pro",
+    "Lite",
+    "Ultra",
+    "Plus",
+    "Max",
+    "Eco",
+    "Smart",
     "Compact",
 ]
 descriptors = [
-    "high‑performance", "energy‑efficient", "sleek design", "wireless", "portable",
-    "eco‑friendly", "water‑resistant", "noise‑cancelling", "lightweight",
+    "high‑performance",
+    "energy‑efficient",
+    "sleek design",
+    "wireless",
+    "portable",
+    "eco‑friendly",
+    "water‑resistant",
+    "noise‑cancelling",
+    "lightweight",
     "multi‑functional",
 ]
 
-def random_product(idx: int) -> Dict[str, Any]:
+
+def random_product(idx: int) -> dict[str, Any]:
     cat = random.choice(list(categories.keys()))
     base_name = random.choice(categories[cat])
     adj = random.choice(adjectives)
@@ -113,6 +172,7 @@ def random_product(idx: int) -> Dict[str, Any]:
         "brand": brand,
     }
 
+
 # ---------------------------------------------------------------------------
 # 2)  Embedding helpers – lazily loaded after vertexai.init()
 # ---------------------------------------------------------------------------
@@ -125,7 +185,7 @@ def init_vertex(model: str, project: str | None, location: str | None) -> None:
     global _embed_model
     try:
         _embed_model = TextEmbeddingModel.from_pretrained(model)
-    except NotFound as nf:
+    except NotFound:
         sys.exit(
             f"\n❌ Model '{model}' not found or not enabled for project '{project}'.\n"
             "Make sure (1) Vertex AI API is enabled, (2) the model is available "
@@ -135,34 +195,38 @@ def init_vertex(model: str, project: str | None, location: str | None) -> None:
         )
 
 
-def embed(text: str) -> List[float]:
+def embed(text: str) -> list[float]:
     if _embed_model is None:
         raise RuntimeError("Vertex AI not initialised – call init_vertex() first")
     return list(_embed_model.get_embeddings([text])[0].values)
+
 
 # ---------------------------------------------------------------------------
 # 3)  JSONL writer (unchanged)
 # ---------------------------------------------------------------------------
 
-def write_jsonl(products: List[Dict[str, Any]], dest: Path) -> None:
+
+def write_jsonl(products: list[dict[str, Any]], dest: Path) -> None:
     with dest.open("w", encoding="utf-8") as fh:
         for p in products:
-            vec = embed(
-                f"{p['name']}. {p['description']} Brand: {p['brand']}. Category: {p['category']}"
-            )
+            vec = embed(f"{p['name']}. {p['description']} Brand: {p['brand']}. Category: {p['category']}")
             fh.write(
-                json.dumps({
-                    "id": p["id"],
-                    "embedding": vec,
-                    "metadata": {k: v for k, v in p.items() if k != "id"},
-                })
+                json.dumps(
+                    {
+                        "id": p["id"],
+                        "embedding": vec,
+                        "metadata": {k: v for k, v in p.items() if k != "id"},
+                    }
+                )
                 + "\n"
             )
     print(f"Wrote {len(products)} products → {dest}")
 
+
 # ---------------------------------------------------------------------------
 # 4)  Upload helper (unchanged)
 # ---------------------------------------------------------------------------
+
 
 def run_upload(cli: str, src: Path, dest: str) -> None:
     if cli == "gsutil":
@@ -176,9 +240,11 @@ def run_upload(cli: str, src: Path, dest: str) -> None:
     src.unlink()
     print("Upload done →", dest)
 
+
 # ---------------------------------------------------------------------------
 # 5)  CLI entrypoint
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate + optionally upload a Vertex AI JSONL catalogue.")
@@ -197,7 +263,7 @@ def main() -> None:
     # Vertex AI initialisation & model load
     try:
         init_vertex(model=args.model, project=args.project or os.getenv("GOOGLE_CLOUD_PROJECT"), location=args.location)
-    except VertexAIError as e:
+    except VertexAIError:
         sys.exit("Vertex AI auth failed – run 'gcloud auth application-default login' and check project.")
 
     # Generate + write
