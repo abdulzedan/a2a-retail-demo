@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class MissingConfigError(Exception):
     """Exception for missing configuration."""
+
     pass
 
 
@@ -34,14 +35,14 @@ def main(host: str, port: int):
         # Check for required configuration
         if not os.getenv("GOOGLE_API_KEY"):
             raise MissingConfigError("GOOGLE_API_KEY environment variable not set.")
-        
+
         if not os.getenv("VERTEX_SEARCH_SERVING_CONFIG"):
             raise MissingConfigError(
                 "VERTEX_SEARCH_SERVING_CONFIG environment variable not set.\n"
                 "Format: projects/{project}/locations/{location}/collections/{collection}"
                 "/dataStores/{datastore}/servingConfigs/{config}"
             )
-        
+
         if not os.getenv("GOOGLE_CLOUD_PROJECT"):
             raise MissingConfigError("GOOGLE_CLOUD_PROJECT environment variable not set.")
 
@@ -99,7 +100,7 @@ def main(host: str, port: int):
         logger.info(f"Starting Inventory Agent (Vertex AI) on http://{host}:{port}")
         logger.info(f"Using Vertex AI Search: {os.getenv('VERTEX_SEARCH_SERVING_CONFIG')}")
         logger.info("Agent capabilities: Semantic search, similarity matching, real-time inventory")
-        
+
         uvicorn.run(server.build(), host=host, port=port)
 
     except MissingConfigError as e:

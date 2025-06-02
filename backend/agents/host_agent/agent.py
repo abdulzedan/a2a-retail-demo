@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Any, List, Dict
+from typing import Any
 from collections.abc import AsyncIterable
 
 import httpx
@@ -139,35 +139,30 @@ class HostAgent:
         """Forward query to Inventory Agent over A2A."""
         return await self._call_agent_with_a2a(self.INVENTORY_AGENT_URL, query, context_id)
 
-    async def call_agents_parallel(self, inventory_query: str, customer_service_query: str, context_id: str) -> Dict[str, str]:
+    async def call_agents_parallel(
+        self, inventory_query: str, customer_service_query: str, context_id: str
+    ) -> dict[str, str]:
         """Call both agents in parallel and return their responses."""
         logger.info("Executing parallel agent calls")
-        
+
         # Create tasks for parallel execution
-        inventory_task = asyncio.create_task(
-            self.call_inventory_agent(inventory_query, context_id)
-        )
+        inventory_task = asyncio.create_task(self.call_inventory_agent(inventory_query, context_id))
         customer_service_task = asyncio.create_task(
             self.call_customer_service_agent(customer_service_query, context_id)
         )
-        
+
         # Wait for both tasks to complete
         inventory_response, customer_service_response = await asyncio.gather(
-            inventory_task, 
-            customer_service_task,
-            return_exceptions=True
+            inventory_task, customer_service_task, return_exceptions=True
         )
-        
+
         # Handle any exceptions
         if isinstance(inventory_response, Exception):
             inventory_response = f"Error from inventory agent: {str(inventory_response)}"
         if isinstance(customer_service_response, Exception):
             customer_service_response = f"Error from customer service agent: {str(customer_service_response)}"
-        
-        return {
-            "inventory": inventory_response,
-            "customer_service": customer_service_response
-        }
+
+        return {"inventory": inventory_response, "customer_service": customer_service_response}
 
     async def get_agent_status(self) -> str:
         """Return online/offline status for remote agents."""
@@ -283,16 +278,23 @@ Important guidelines:
             if "ROUTE_TO_BOTH" in routing_decision:
                 # Parallel execution
                 if not inventory_card or not customer_service_card:
-                    yield {"type": "error", "message": "One or more agents are offline. Cannot execute parallel request."}
+                    yield {
+                        "type": "error",
+                        "message": "One or more agents are offline. Cannot execute parallel request.",
+                    }
                     return
 
-                yield {"type": "routing", "agent": "both", "message": "Coordinating with both inventory and customer service..."}
-                
+                yield {
+                    "type": "routing",
+                    "agent": "both",
+                    "message": "Coordinating with both inventory and customer service...",
+                }
+
                 # Execute parallel calls
                 responses = await self.call_agents_parallel(query, query, context_id)
-                
+
                 yield {"type": "agent_response", "agent": "parallel"}
-                
+
                 # Combine responses
                 combined_response = f"""I've consulted both our inventory and customer service systems:
 
@@ -301,7 +303,7 @@ Important guidelines:
 
 **Customer Service Information:**
 {responses['customer_service']}"""
-                
+
                 yield {"type": "result", "content": combined_response}
 
             elif "ROUTE_TO_INVENTORY" in routing_decision:
