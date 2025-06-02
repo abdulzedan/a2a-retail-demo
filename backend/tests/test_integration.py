@@ -194,7 +194,7 @@ class TestAgentIntegration:
                     with patch("backend.agents.inventory_agent_a2a.agent.Runner", return_value=mocks[1]):
                         agent = agent_class()
             else:
-                with patch("google.generativeai.GenerativeModel"):
+                with patch("langchain_google_genai.ChatGoogleGenerativeAI"):
                     agent = agent_class()
 
             response = await agent.handle_a2a_request(test_request)
