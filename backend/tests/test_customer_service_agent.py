@@ -43,28 +43,30 @@ class TestCustomerServiceAgent:
         """Test the streaming response functionality."""
         query = "What are your store hours?"
         session_id = "test-session-123"
-        
+
         # Mock the graph's astream method
         mock_astream = AsyncMock()
         mock_astream.return_value.__aiter__.return_value = [
             {"messages": [{"role": "assistant", "content": "Our store hours are..."}]}
         ]
         customer_service_agent.graph.astream = mock_astream
-        
+
         # Mock get_agent_response
-        customer_service_agent.get_agent_response = Mock(return_value={
-            "is_task_complete": True,
-            "require_user_input": False,
-            "content": "Our store hours are Monday-Saturday 9 AM - 9 PM, Sunday 10 AM - 6 PM."
-        })
-        
+        customer_service_agent.get_agent_response = Mock(
+            return_value={
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": "Our store hours are Monday-Saturday 9 AM - 9 PM, Sunday 10 AM - 6 PM.",
+            }
+        )
+
         responses = []
         async for response in customer_service_agent.stream(query, session_id):
             responses.append(response)
-        
+
         # Should have at least one response
         assert len(responses) > 0
-        
+
         # Check response structure
         last_response = responses[-1]
         assert "content" in last_response or "is_task_complete" in last_response
@@ -73,19 +75,21 @@ class TestCustomerServiceAgent:
         """Test the invoke method."""
         query = "What are your store hours?"
         session_id = "test-session-123"
-        
+
         # Mock the graph's invoke method
         customer_service_agent.graph.invoke = Mock()
-        
+
         # Mock get_agent_response
-        customer_service_agent.get_agent_response = Mock(return_value={
-            "is_task_complete": True,
-            "require_user_input": False,
-            "content": "Our store hours are Monday-Saturday 9 AM - 9 PM."
-        })
-        
+        customer_service_agent.get_agent_response = Mock(
+            return_value={
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": "Our store hours are Monday-Saturday 9 AM - 9 PM.",
+            }
+        )
+
         result = customer_service_agent.invoke(query, session_id)
-        
+
         assert isinstance(result, dict)
         assert "content" in result
         customer_service_agent.graph.invoke.assert_called_once()
@@ -93,7 +97,7 @@ class TestCustomerServiceAgent:
     def test_tools_exist(self, customer_service_agent):
         """Test that the required tools are present."""
         tool_names = [tool.name for tool in customer_service_agent.tools]
-        
+
         assert "check_order_status" in tool_names
         assert "get_store_hours" in tool_names
         assert "process_return_request" in tool_names

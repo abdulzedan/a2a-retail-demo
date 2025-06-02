@@ -103,11 +103,11 @@ class TestInventoryAgent:
                     "stock_status": "in_stock",
                     "sku": "TV-001",
                     "brand": "TechVision",
-                    "description": "4K Smart TV"
-                }
+                    "description": "4K Smart TV",
+                },
             }
         ]
-        
+
         agent = inventory_agent._build_agent()
         category_tool = next(t for t in agent.tools if t.__name__ == "search_products_by_category")
 
@@ -175,16 +175,16 @@ class TestInventoryAgent:
         mock_session = Mock(id="test-session")
         inventory_agent._runner.session_service.get_session = AsyncMock(return_value=None)
         inventory_agent._runner.session_service.create_session = AsyncMock(return_value=mock_session)
-        
+
         # Mock the runner's run_async to return proper events
         async def mock_run_async(*args, **kwargs):
             mock_event = Mock()
             mock_event.content = Mock(parts=[])
             mock_event.is_final_response = Mock(return_value=True)
             yield mock_event
-        
+
         inventory_agent._runner.run_async = mock_run_async
-        
+
         events = []
         async for event in inventory_agent.stream("Find wireless headphones", "test-session-456"):
             events.append(event)
@@ -199,7 +199,7 @@ class TestInventoryAgent:
         # Mock session
         mock_session = Mock(id="test-session")
         inventory_agent._runner.session_service.get_session = AsyncMock(return_value=mock_session)
-        
+
         # Mock run_async to include tool calls
         async def mock_run_async(*args, **kwargs):
             # First event with tool call
@@ -208,24 +208,24 @@ class TestInventoryAgent:
             mock_event1.content.parts = [Mock(function_call=Mock(name="search_products_by_query"))]
             mock_event1.is_final_response = Mock(return_value=False)
             yield mock_event1
-            
+
             # Final event with response
             mock_event2 = Mock()
             mock_event2.content = Mock()
             mock_event2.content.parts = [Mock(text="Found 3 products", function_call=None)]
             mock_event2.is_final_response = Mock(return_value=True)
             yield mock_event2
-        
+
         inventory_agent._runner.run_async = mock_run_async
-        
+
         events = []
         async for event in inventory_agent.stream("Search for laptops", "test-session"):
             events.append(event)
-        
+
         # Should have tool call event
         tool_events = [e for e in events if e.get("type") == "tool_call"]
         assert len(tool_events) > 0
-        
+
         # Should have final result
         result_events = [e for e in events if e.get("type") == "result"]
         assert len(result_events) == 1

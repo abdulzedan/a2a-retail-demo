@@ -22,10 +22,10 @@ class TestHostAgent:
     def mock_a2a_client(self):
         """Create a mock A2A client."""
         client = Mock()
-        
+
         # Just return a simple mock response
         client.send_message = AsyncMock(return_value=Mock(root=Mock(result="Mock response")))
-        
+
         return client
 
     @pytest.fixture
@@ -72,19 +72,19 @@ class TestHostAgent:
             "defaultOutputModes": ["text"],
             "skills": [],
             "url": "http://localhost:8001",
-            "version": "1.0.0"
+            "version": "1.0.0",
         }
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
-        
+
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
-        
+
         with patch("httpx.AsyncClient", return_value=mock_client):
             card = await host_agent._get_agent_card("http://localhost:8001")
-            
+
             assert card is not None
             assert card.name == "Test Agent"
 
@@ -93,7 +93,7 @@ class TestHostAgent:
         """Test calling the inventory agent."""
         with patch.object(host_agent, "_call_agent_with_a2a", return_value="Product found: Widget"):
             response = await host_agent.call_inventory_agent("Do you have widgets?", "test-context")
-            
+
             assert response == "Product found: Widget"
 
     @pytest.mark.asyncio
@@ -101,7 +101,7 @@ class TestHostAgent:
         """Test calling the customer service agent."""
         with patch.object(host_agent, "_call_agent_with_a2a", return_value="Our store hours are 9-5"):
             response = await host_agent.call_customer_service_agent("What are your hours?", "test-context")
-            
+
             assert response == "Our store hours are 9-5"
 
     @pytest.mark.asyncio
@@ -111,11 +111,9 @@ class TestHostAgent:
         with patch.object(host_agent, "call_inventory_agent", return_value="Inventory response"):
             with patch.object(host_agent, "call_customer_service_agent", return_value="Customer service response"):
                 responses = await host_agent.call_agents_parallel(
-                    "Test query",
-                    "test-context",
-                    ["inventory", "customer_service"]
+                    "Test query", "test-context", ["inventory", "customer_service"]
                 )
-                
+
                 assert "inventory" in responses
                 assert "customer_service" in responses
                 assert responses["inventory"] == "Inventory response"
@@ -127,9 +125,9 @@ class TestHostAgent:
         with patch.object(host_agent, "_get_agent_card") as mock_get_card:
             # Mock successful card retrieval
             mock_get_card.return_value = Mock(name="Test Agent")
-            
+
             status = await host_agent.get_agent_status()
-            
+
             assert isinstance(status, str)
             assert "Status" in status
 
@@ -138,12 +136,12 @@ class TestHostAgent:
         """Test the streaming response functionality."""
         query = "Do you have any TVs in stock?"
         session_id = "test-session-123"
-        
+
         # Mock session service
         mock_session = Mock(id=session_id)
         host_agent._runner.session_service.get_session = AsyncMock(return_value=None)
         host_agent._runner.session_service.create_session = AsyncMock(return_value=mock_session)
-        
+
         # Mock the runner's async stream as a proper async generator
         async def mock_run_async(*args, **kwargs):
             # Yield events
@@ -151,22 +149,22 @@ class TestHostAgent:
             mock_event.content = Mock(parts=[Mock(text="We have TVs in stock")])
             mock_event.is_final_response = Mock(return_value=True)
             yield mock_event
-        
+
         host_agent._runner.run_async = mock_run_async
-        
+
         # Mock _get_agent_card to prevent HTTP calls and return valid cards
         mock_card = Mock(name="Test Agent", description="Test Description")
         with patch.object(host_agent, "_get_agent_card", return_value=mock_card):
             responses = []
             async for response in host_agent.stream(query, session_id):
                 responses.append(response)
-            
+
             # Should have at least one response
             assert len(responses) > 0
-            
+
             # Should have at least status message
             assert any(r.get("type") == "status" for r in responses)
-            
+
             # Final response could be result or error based on routing
             final_response = responses[-1]
             assert "type" in final_response
