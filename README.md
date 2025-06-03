@@ -104,7 +104,7 @@ This approach mirrors how human organizations work - with specialists handling t
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/a2a-retail-demo.git
+   git clone https://github.com/abdulzedan/a2a-retail-demo.git
    cd a2a-retail-demo
    ```
 
