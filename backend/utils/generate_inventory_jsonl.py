@@ -2,7 +2,6 @@
 """Generate a JSON‑Lines product catalogue **with embeddings** for Vertex AI Vector
 Search and (optionally) upload to Cloud Storage.
 
-✨ **What’s new in this revision**
 ---------------------------------
 * Adds `--model` flag (default **text-embedding-005**) so you can pick any
   Vertex AI text‑embedding model that your project has access to (`gemini‑embedding‑001`,

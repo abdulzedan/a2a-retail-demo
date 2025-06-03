@@ -100,6 +100,31 @@ This approach mirrors how human organizations work - with specialists handling t
   - macOS/Linux: `~/.config/gcloud/application_default_credentials.json`
   - Windows: `%APPDATA%\gcloud\application_default_credentials.json`
 
+## 📊 Setting Up Vertex AI Search
+
+Before running the demo, you need to populate the Vertex AI Search engine with inventory data. The inventory agent relies on this search data to function properly.
+
+### Quick Setup
+
+1. **Generate and upload inventory data**:
+   ```bash
+   # Navigate to the utils directory
+   cd backend/utils
+   
+   # Follow the detailed instructions in the script
+   python generate_inventory_jsonl.py --help
+   ```
+
+2. **Detailed Instructions**: 
+   - See [`backend/utils/generate_inventory_jsonl.py`](backend/utils/generate_inventory_jsonl.py) for complete setup instructions
+   - The script includes detailed usage examples and authentication steps
+   - It will generate sample products with embeddings and upload them to your Vertex AI Search data store
+
+3. **Get your serving config**: After setting up the data store, you'll need the serving config path for your `.env` file in the format:
+   ```
+   projects/{project}/locations/{location}/collections/{collection}/dataStores/{datastore}/servingConfigs/{config}
+   ```
+
 ## 🛠️ Installation
 
 1. **Clone the repository**:
