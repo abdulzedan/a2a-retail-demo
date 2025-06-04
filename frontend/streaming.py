@@ -1,4 +1,4 @@
-"""Enhanced streaming handler with detailed thought process and real-time updates."""
+"""Streaming handler with detailed thought process and real-time updates."""
 import asyncio
 import uuid
 from typing import Dict, List, AsyncIterable, Optional
@@ -26,8 +26,8 @@ class StreamingEvent:
         self.metadata = metadata or {}
         self.timestamp = datetime.now().isoformat()
 
-class EnhancedStreamingHandler:
-    """Enhanced streaming handler with detailed thought process."""
+class StreamingHandler:
+    """Streaming handler with detailed thought process."""
     
     def __init__(self):
         self.agent_urls = {
@@ -335,11 +335,11 @@ class EnhancedStreamingHandler:
             yield event
 
 # Usage example for integration with Mesop frontend
-class EnhancedStreamingIntegration:
+class StreamingIntegration:
     """Integration layer for Mesop frontend."""
     
     def __init__(self):
-        self.handler = EnhancedStreamingHandler()
+        self.handler = StreamingHandler()
     
     async def process_user_message(
         self, 
@@ -371,10 +371,10 @@ class EnhancedStreamingIntegration:
         """Get detailed agent status for UI display."""
         return await self.handler.check_agent_health_with_details()
 
-# Example of how to integrate with the enhanced Mesop frontend
-async def enhanced_send_message_handler(message_text: str, context_id: str, show_thoughts: bool = True):
-    """Enhanced message handler for Mesop integration."""
-    integration = EnhancedStreamingIntegration()
+# Example of how to integrate with the Mesop frontend
+async def send_message_handler(message_text: str, context_id: str, show_thoughts: bool = True):
+    """Message handler for Mesop integration."""
+    integration = StreamingIntegration()
     
     events = await integration.process_user_message(
         message_text, 

@@ -1,4 +1,4 @@
-/* Enhanced styles for A2A Retail Demo with Dark Mode & Animations */
+/* Styles for A2A Retail Demo with Dark Mode & Animations */
 
 /* Root variables for theme switching */
 :root {
@@ -83,7 +83,7 @@
   }
 }
 
-/* Enhanced loading states */
+/* Loading states */
 .loading {
   animation: pulse 1.5s ease-in-out infinite;
 }
@@ -128,7 +128,7 @@
   background: rgba(59, 130, 246, 0.5);
 }
 
-/* Enhanced message bubbles */
+/* Message bubbles */
 .message-bubble {
   animation: slideInFromRight var(--animation-duration) var(--animation-easing);
   max-width: 75%;
@@ -193,7 +193,7 @@
   border-color: #60a5fa;
 }
 
-/* Enhanced status indicators */
+/* Status indicators */
 .status-indicator {
   display: inline-flex;
   align-items: center;
@@ -237,7 +237,7 @@
   }
 }
 
-/* Enhanced cards with hover effects */
+/* Cards with hover effects */
 .agent-card, .status-card {
   transition: all var(--animation-duration) var(--animation-easing);
   position: relative;
@@ -297,19 +297,19 @@
   box-shadow: var(--shadow-heavy);
 }
 
-/* Input field enhancements */
-.enhanced-input {
+/* Input field styling */
+.styled-input {
   position: relative;
   transition: all var(--animation-duration) var(--animation-easing);
 }
 
-.enhanced-input:focus-within {
+.styled-input:focus-within {
   transform: scale(1.02);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
 
-/* Button enhancements */
-.enhanced-button {
+/* Button styling */
+.styled-button {
   position: relative;
   overflow: hidden;
   transition: all var(--animation-duration) var(--animation-easing);
@@ -326,16 +326,16 @@
   transition: left 0.5s;
 }
 
-.enhanced-button:hover::before {
+.styled-button:hover::before {
   left: 100%;
 }
 
-.enhanced-button:hover {
+.styled-button:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-medium);
 }
 
-.enhanced-button:active {
+.styled-button:active {
   transform: translateY(0);
 }
 
@@ -428,7 +428,7 @@
   }
 }
 
-/* Accessibility enhancements */
+/* Accessibility features */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;

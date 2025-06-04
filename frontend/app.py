@@ -1,4 +1,4 @@
-"""Enhanced Frontend for A2A Retail Demo with Dark Mode and Streaming."""
+"""Frontend for A2A Retail Demo with Dark Mode and Streaming."""
 import asyncio
 import os
 import sys
@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 
 @me.stateclass
 class AppState:
-    """Enhanced application state with theme and streaming support."""
+    """Application state with theme and streaming support."""
     messages: List[dict] = field(default_factory=list)
     current_input: str = ""
     is_loading: bool = False
@@ -242,7 +242,7 @@ def update_session_stats(response_time: float = None, tokens_used: int = None,
         state.session_stats["agents_used"].append(agent_used)
 
 async def on_send_message(e: me.ClickEvent):
-    """Handle send message button click with enhanced streaming and logging."""
+    """Handle send message button click with streaming and logging."""
     state = me.state(AppState)
     if not state.current_input.strip():
         return
@@ -462,7 +462,7 @@ def on_toggle_logs(e: me.ClickEvent):
     state.show_logs = not state.show_logs
 
 def agent_status_card(name: str, online: bool, port: int, colors: dict):
-    """Render an enhanced agent status card."""
+    """Render an agent status card."""
     status = "Online" if online else "Offline"
     color = colors["status_online"] if online else colors["status_offline"]
     
@@ -494,7 +494,7 @@ def agent_status_card(name: str, online: bool, port: int, colors: dict):
         me.text(f"{status} • :{port}", style=me.Style(color=color, font_size="14px"))
 
 def chat_message_bubble(message: dict, colors: dict):
-    """Render an enhanced chat message bubble with streaming support."""
+    """Render a chat message bubble with streaming support."""
     is_user = message["role"] == "user"
     is_thinking = message.get("is_thinking", False)
     is_streaming = message.get("is_streaming", False)
@@ -608,9 +608,9 @@ def floating_action_buttons(colors: dict):
             )
         )
 
-@me.page(path="/", title="A2A Retail Demo - Enhanced")
+@me.page(path="/", title="A2A Retail Demo")
 def main_page():
-    """Enhanced main application page with dark mode and streaming."""
+    """Main application page with dark mode and streaming."""
     state = me.state(AppState)
     colors = get_theme_colors(state.dark_mode)
     
@@ -658,7 +658,7 @@ def main_page():
                             )
                         )
                         me.text(
-                            "Enhanced AI-powered retail assistant with Agent-to-Agent protocol",
+                            "AI-powered retail assistant with Agent-to-Agent protocol",
                             type="body-1",
                             style=me.Style(color=colors["text_secondary"]),
                         )
@@ -937,7 +937,7 @@ def main_page():
                         if not state.messages:
                             with me.box(style=me.Style(text_align="center", padding=me.Padding.all(32))):
                                 me.text(
-                                    "🤖 Welcome to the Enhanced A2A Retail Demo!",
+                                    "🤖 Welcome to the A2A Retail Demo!",
                                     type="headline-6",
                                     style=me.Style(color=colors["text_primary"], margin=me.Margin(bottom=16))
                                 )
@@ -1099,7 +1099,7 @@ if __name__ == "__main__":
     HOST = os.environ.get("MESOP_HOST", "127.0.0.1")
     PORT = int(os.environ.get("MESOP_PORT", "8080"))
     
-    print(f"🚀 Starting Enhanced A2A Retail Demo Frontend on http://{HOST}:{PORT}")
+    print(f"🚀 Starting A2A Retail Demo Frontend on http://{HOST}:{PORT}")
     print("✨ Features: Dark Mode, Streaming UI, Agent Thoughts, Modern Design")
     
     try:
