@@ -4,6 +4,14 @@
 
 This project demonstrates the power of **Google's Agent-to-Agent (A2A) protocol** in building sophisticated multi-agent AI systems. It showcases how specialized AI agents can collaborate seamlessly to solve complex business problems in a retail context.
 
+## Demo
+
+[![Video_demo](./video/thumbnail.jpg)](https://github.com/user-attachments/assets/36f8347f-5d0e-47a6-b361-d6a7d59c9dae)
+
+
+
+
+
 ### Why This Matters
 
 Traditional single-agent AI systems often struggle with diverse tasks that require different types of expertise. This demo illustrates how the A2A protocol enables:
@@ -14,6 +22,7 @@ Traditional single-agent AI systems often struggle with diverse tasks that requi
 - **Real-world Integration**: Demonstrates integration with Google's Vertex AI Search for production-ready capabilities
 
 This approach mirrors how human organizations work - with specialists handling their areas of expertise while collaborating on complex tasks.
+
 
 ## 🚀 Features
 
