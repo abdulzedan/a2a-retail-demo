@@ -45,11 +45,9 @@ This approach mirrors how human organizations work - with specialists handling t
    Frontend      →  Host Agent      →  Inventory Agent    
    (Mesop)          (Port 8000)        (Port 8001)        
                         ↓              - Vertex AI Search 
-                                       - ADK Framework    
-                                                              
+                        ↓              - ADK Framework    
                         ↓                                     
-                                                              
-                                       Customer Service    
+                        └──────────→   Customer Service    
                                        Agent (Port 8002)   
                                        - LangGraph         
                                        - Gemini Model      
